@@ -3,26 +3,29 @@
 #
 # Only the regions actually referenced by a project (directly or by polygon
 # overlap) are built on a given run. Add more continents/countries as needed.
+#
+# `polygon` must be a GeoJSON Polygon/MultiPolygon. It is validated each run;
+# invalid geometry is skipped and reported in the Action.
 
 regions:
   # --- continents (parent: world = the full planet) ---
   - id: europe
     name: Europe
     parent: world
-    polygon: ./polygons/europe.poly
+    polygon: ./polygons/europe.geojson
 
   - id: africa
     name: Africa
     parent: world
-    polygon: ./polygons/africa.poly
+    polygon: ./polygons/africa.geojson
 
   # --- countries (optional intermediate layer) ---
   - id: germany
     name: Germany
     parent: europe
-    polygon: ./polygons/germany.poly
+    polygon: ./polygons/germany.geojson
 
   - id: france
     name: France
     parent: europe
-    polygon: ./polygons/france.poly
+    polygon: ./polygons/france.geojson

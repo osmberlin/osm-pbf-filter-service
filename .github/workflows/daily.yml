@@ -1,0 +1,39 @@
+# DRAFT — daily pipeline: update the planet, build extracts, commit metadata.
+# See PLAN.md Part C. Runs on the self-hosted runner on the FOSSGIS server.
+name: daily
+
+on:
+  schedule:
+    - cron: "0 3 * * *"        # TODO: align with when OSMF daily diffs are ready
+  workflow_dispatch: {}        # allow manual runs
+
+# Don't let two pipeline runs touch the planet at once.
+concurrency:
+  group: osm-pipeline
+  cancel-in-progress: false
+
+# Least privilege by default; the commit step opts into write below.
+permissions:
+  contents: read
+
+jobs:
+  pipeline:
+    runs-on: [self-hosted, osm]
+    permissions:
+      contents: write          # only this job commits status/ + plan.json
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Guard free disk
+        run: ./scripts/check-disk.sh        # fails loudly below a threshold (PLAN.md §A6)
+
+      - name: Update planet (apply OSMF diffs)
+        run: ./scripts/update-planet.sh
+
+      - name: Build extracts
+        run: |
+          bun install --frozen-lockfile || bun install
+          bun run build                     # the orchestrator (src/build.ts)
+
+      - name: Commit resolved plan + status
+        run: ./scripts/commit-results.sh

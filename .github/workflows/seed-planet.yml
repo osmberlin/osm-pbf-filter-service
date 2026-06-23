@@ -1,0 +1,26 @@
+# DRAFT — manual full re-download of the planet (PLAN.md §B1 / §C3).
+# Never runs automatically. Requires typing "reseed" to confirm.
+name: seed-planet
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "reseed" to confirm a full planet re-download (~87 GB)'
+        required: true
+
+concurrency:
+  group: osm-pipeline          # share the lock with daily.yml
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  seed:
+    if: ${{ inputs.confirm == 'reseed' }}
+    runs-on: [self-hosted, osm]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download + verify + atomically replace planet
+        run: ./scripts/seed-planet.sh

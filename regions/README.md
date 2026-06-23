@@ -27,24 +27,33 @@ regions:
   - id: europe
     name: Europe
     parent: world              # "world" = the full planet (no polygon)
-    polygon: ./polygons/europe.poly
+    polygon: ./polygons/europe.geojson
   - id: germany
     name: Germany
     parent: europe
-    polygon: ./polygons/germany.poly
+    polygon: ./polygons/germany.geojson
   - id: france
     name: France
     parent: europe
-    polygon: ./polygons/france.poly
+    polygon: ./polygons/france.geojson
 ```
 
 - `parent: world` marks a top-level (continent) node.
 - A project references a leaf by `area.region:`, or supplies a custom polygon
   and the orchestrator auto-detects which continent/country it intersects.
 
+## Polygon format & validation
+
+Polygons are **GeoJSON** (preferred over osmium's `.poly` — it's a standard
+format we can lint and reuse; osmium reads GeoJSON for `extract -p` and in the
+multi-extract config). Each file **must** be a GeoJSON `Polygon` or
+`MultiPolygon` (a `Feature`/`FeatureCollection` wrapping one is fine). The
+orchestrator validates this on every run and **skips + reports** anything invalid
+(see PLAN.md B4 / C1).
+
 ## polygons/
 
-Boundary polygons in osmium-compatible formats (`.poly` or GeoJSON). These are
-**not** included yet — see [polygons/README.md](polygons/README.md) for where to
-get them (Geofabrik provides ready-made `.poly` files for continents and
-countries).
+The actual GeoJSON files are **not included yet** — see
+[polygons/README.md](polygons/README.md) for where to get them (Geofabrik
+provides ready-made `.poly` files for continents/countries that can be converted
+to GeoJSON).

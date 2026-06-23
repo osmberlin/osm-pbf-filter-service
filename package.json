@@ -1,0 +1,13 @@
+{
+  "name": "osm-pbf-filter-service",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Orchestrator that builds per-project OSM extracts from a daily planet (DRAFT).",
+  "scripts": {
+    "build": "bun run src/build.ts"
+  },
+  "dependencies": {
+    "yaml": "^2.5.0"
+  }
+}

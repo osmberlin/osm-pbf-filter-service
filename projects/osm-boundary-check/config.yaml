@@ -12,6 +12,5 @@ filters:
 osmium:
   extract_strategy: complete_ways
   add_referenced: true
-
-output:
-  filename: osm-boundary-check.osm.pbf
+# output.filename defaults to latest.osm.pbf
+#   -> served at <host>/extracts/osm-boundary-check/latest.osm.pbf

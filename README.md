@@ -8,8 +8,9 @@ The design goal is **minimal manual server work**: configuration lives in this
 git repository, and all orchestration runs through CI on a self-hosted runner
 installed on the community server.
 
-> **Status: planning.** No pipeline code exists yet. This repo currently
-> contains the design and example configuration only.
+> **Status: planning + draft scaffolding.** The design and example configs are
+> real; `src/`, `scripts/`, `server/` and `.github/workflows/` exist as **draft
+> skeletons** to make the design concrete — they are not yet wired up end-to-end.
 
 ## Start here
 
@@ -17,6 +18,8 @@ installed on the community server.
   - Part A — Server provisioning (the infrastructure)
   - Part B — How the application works (data lifecycle, configs, the extractor)
   - Part C — CI/CD workflows
+- **[ZUSAMMENFASSUNG.de.md](ZUSAMMENFASSUNG.de.md)** — kurze deutsche
+  Zusammenfassung für die FOSSGIS-Runde.
 - **[projects/](projects/)** — one folder per project; each defines the area and
   tags it needs. See [projects/README.md](projects/README.md).
 - **[regions/](regions/)** — the static region hierarchy (world → continents →

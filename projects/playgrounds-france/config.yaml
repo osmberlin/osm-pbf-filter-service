@@ -10,6 +10,5 @@ filters:
 osmium:
   extract_strategy: complete_ways
   add_referenced: true
-
-output:
-  filename: playgrounds-france.osm.pbf
+# output.filename defaults to latest.osm.pbf
+#   -> served at <host>/extracts/playgrounds-france/latest.osm.pbf

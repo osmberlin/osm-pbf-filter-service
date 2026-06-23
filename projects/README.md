@@ -1,13 +1,17 @@
 # projects/
 
-One subfolder per project. The folder name is the project id and (by default)
-the path segment in the download URL.
+One subfolder per project. The folder name is the project id and the path
+segment in the download URL. The data file is always served as `latest.osm.pbf`:
+
+```
+https://<host>/extracts/<project-id>/latest.osm.pbf
+```
 
 ```
 projects/
   <project-id>/
     config.yaml        # required — area + tag filters
-    area.geojson       # optional — custom polygon, if not using a named region
+    area.geojson       # optional — custom Polygon/MultiPolygon, if not using a named region
 ```
 
 ## config.yaml schema
@@ -19,7 +23,9 @@ description: One line about what this extract is for.
 # WHERE to extract. Choose exactly one of `region` or `polygon`.
 area:
   region: germany                # an id from regions/regions.yaml
-  # polygon: ./area.geojson      # OR a custom polygon (GeoJSON or .poly)
+  # polygon: ./area.geojson      # OR a custom GeoJSON Polygon/MultiPolygon.
+                                 # Validated on each run; invalid geometry is
+                                 # skipped + reported in the Action (see PLAN.md B4).
 
 # WHAT to keep. osmium tags-filter expressions.
 # Syntax: [object-types/]key[=value[,value...]]
@@ -37,9 +43,10 @@ osmium:
   extract_strategy: complete_ways   # complete_ways | smart | simple
   add_referenced: true              # keep nodes/members referenced after tag-filter
 
-# Output (optional)
+# Output (optional) — you normally omit this.
 output:
-  filename: my-project.osm.pbf      # defaults to "<project-id>.osm.pbf"
+  filename: latest.osm.pbf          # default; served at
+                                    #   <host>/extracts/<project-id>/latest.osm.pbf
 ```
 
 See the two worked examples in this folder:

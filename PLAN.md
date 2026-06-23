@@ -191,6 +191,19 @@ can open a pull request that would otherwise run code on the box.
 - Firewall: expose only 80/443 (nginx); the runner needs **outbound** to GitHub
   only (no inbound).
 
+**Packages & docs (for manual setup / further research)**
+- [Runner application releases](https://github.com/actions/runner/releases) — the
+  package to download and install on the server.
+- [Adding a self-hosted runner](https://docs.github.com/en/actions/how-tos/manage-runners/self-hosted-runners/add-runners)
+- [Running the runner as a systemd service (`svc.sh`)](https://docs.github.com/en/actions/hosting-your-own-runners/managing-self-hosted-runners/configuring-the-self-hosted-runner-application-as-a-service)
+- [Self-hosted runners reference](https://docs.github.com/en/actions/reference/runners/self-hosted-runners)
+- [Managing self-hosted runners (overview)](https://docs.github.com/en/actions/hosting-your-own-runners/managing-self-hosted-runners)
+
+Install flow (summary): download + unpack the runner package from the releases
+link → `./config.sh --url https://github.com/<org>/<repo> --token <token> --labels osm`
+→ `sudo ./svc.sh install osmrunner && sudo ./svc.sh start`. (See `server/bootstrap.sh`
+for the deps; runner registration is interactive and stays manual by design.)
+
 > Because the box also hosts uMap, this setup must be coordinated with **Lars
 > Lingner / the FOSSGIS OSM-server admins** before registering the runner.
 
@@ -204,7 +217,7 @@ can open a pull request that would otherwise run code on the box.
   work/                     # scratch space for intermediate extracts (gitignored)
   extracts/                 # nginx web root  ->  https://osm.example.org/extracts/
     osm-boundary-check/
-      osm-boundary-check.osm.pbf
+      latest.osm.pbf        # stable filename, overwritten in place each run
       status.json
     index.json              # listing of all projects + timestamps
 ```
@@ -298,6 +311,12 @@ filters:
 Defined in [`regions/regions.yaml`](regions/regions.yaml):
 `world → continents → countries`, each with a polygon.
 
+**Polygon format: GeoJSON** (preferred over osmium's `.poly`), because it's a
+standard format we can lint and reuse. osmium accepts GeoJSON for both
+`osmium extract -p …` and the multi-extract config. Each polygon **must** be a
+GeoJSON `Polygon` or `MultiPolygon` (a `Feature`/`FeatureCollection` wrapping one
+is fine) — see "Input validation" below.
+
 Why a tree at all: cutting Germany directly from the 87 GB planet means reading
 the whole planet **per project**. Layering (`world → europe → germany`) means the
 expensive planet read happens **once**, then each continent is read once, etc.
@@ -322,7 +341,9 @@ Resolving a project to a chain:
 
 Pure planning + shelling out to `osmium`. Steps:
 
-**1. Load** all `projects/*/config.yaml` + `regions/regions.yaml`.
+**1. Load & validate** all `projects/*/config.yaml` + `regions/regions.yaml` and
+every referenced GeoJSON polygon — see **Input validation** below. Invalid inputs
+are **skipped**, not fatal.
 
 **2. Build the active DAG.** For each project, compute its chain
 `world → … → project`. Union all chains into one tree; drop unused branches.
@@ -371,7 +392,7 @@ osmium extract --config europe-projects.json --strategy complete_ways \
 # Final per-project tag-filter to its exact tags:
 osmium tags-filter --add-referenced \
   work/germany.osm.pbf nwr/boundary=administrative nwr/admin_level \
-  -o /srv/osm/extracts/osm-boundary-check/osm-boundary-check.osm.pbf
+  -o /srv/osm/extracts/osm-boundary-check/latest.osm.pbf
 ```
 
 Notes:
@@ -380,7 +401,21 @@ Notes:
 - `--add-referenced` keeps nodes/members referenced by kept objects so the result
   builds valid geometry (at some size cost — a documented trade-off).
 - The multi-extract `--config` JSON is **generated** by the orchestrator from the
-  active nodes.
+  active nodes; polygons are referenced as **GeoJSON** files.
+
+**Input validation (fail-soft).** Before building anything, the orchestrator
+checks each project/region:
+
+- the YAML parses and has the required fields;
+- the referenced GeoJSON exists and its geometry is a **`Polygon` or
+  `MultiPolygon`** (unwrapping a `Feature`/`FeatureCollection`); anything else
+  (point, line, empty, malformed JSON) is rejected.
+
+Invalid projects/regions are **skipped** so one broken config can't break
+everyone else's extract. Every skip is reported as a **GitHub Actions error
+annotation** (`::error file=…::`, which highlights the offending file in the run)
+plus a line in the run summary (§C1). Optional toggle: also exit non-zero so the
+job is marked failed when any input was invalid.
 
 ## B5. Output, status files, HTTP headers
 
@@ -389,7 +424,7 @@ Next to every extract, write `status.json`:
 ```json
 {
   "project": "osm-boundary-check",
-  "file": "osm-boundary-check.osm.pbf",
+  "file": "latest.osm.pbf",
   "size_bytes": 12345678,
   "sha256": "…",
   "area": { "region": "germany" },
@@ -402,7 +437,7 @@ Next to every extract, write `status.json`:
   "extract_run_at": "2026-06-23T03:20:00Z",    // when this extract was produced
   "extract_duration_seconds": 42,
 
-  "download_url": "https://osm.example.org/extracts/osm-boundary-check/osm-boundary-check.osm.pbf"
+  "download_url": "https://osm.example.org/extracts/osm-boundary-check/latest.osm.pbf"
 }
 ```
 
@@ -438,13 +473,14 @@ bloat the repo without adding traceability the metadata doesn't already give.
 Stable, predictable, documentable:
 
 ```
-https://<host>/extracts/<project-id>/<project-id>.osm.pbf      # the data
-https://<host>/extracts/<project-id>/status.json               # the metadata
-https://<host>/extracts/index.json                             # everything
+https://<host>/extracts/<project-id>/latest.osm.pbf           # the data
+https://<host>/extracts/<project-id>/status.json              # the metadata
+https://<host>/extracts/index.json                            # everything
 ```
 
-URLs don't change between runs (the file is overwritten in place), so consumers
-can hard-code them and check `status.json` / `Last-Modified` for freshness.
+The data file is always `latest.osm.pbf` (overwritten in place each run), so the
+URL is stable across runs — consumers hard-code it and check `status.json` /
+`Last-Modified` for freshness.
 
 ---
 
@@ -458,7 +494,10 @@ prevents two pipeline runs from touching the planet at once.
 - Every step streams to the **Actions log** (publicly viewable if the repo is
   public) — this satisfies "logging must be visible in Actions".
 - The orchestrator writes a human summary to **`$GITHUB_STEP_SUMMARY`**:
-  regions activated, tag unions, per-step timings, output sizes.
+  regions activated, tag unions, per-step timings, output sizes, and **any
+  skipped/invalid inputs**.
+- Validation failures (§B4) are emitted as **`::error file=…::` annotations** so
+  they surface at the top of the run and on the offending file.
 - The committed `plan.json` + `status/**` give a durable record outside the logs.
 
 ## C2. `daily.yml` — update + extract (scheduled)
@@ -517,22 +556,25 @@ jobs:
 ```
 PLAN.md                       # this document
 README.md
+ZUSAMMENFASSUNG.de.md         # short German one-pager for FOSSGIS
 .gitignore
 projects/                     # one folder per project (inputs)
   osm-boundary-check/config.yaml
   playgrounds-france/config.yaml
 regions/
   regions.yaml                # static hierarchy
-  polygons/                   # .poly / GeoJSON shapes
-src/                          # Bun orchestrator            (not built yet)
-scripts/                      # update-planet / seed / commit-results (not built yet)
-server/                       # bootstrap.sh, nginx.conf, runner setup (not built yet)
-.github/workflows/            # daily.yml, seed-planet.yml   (not built yet)
+  polygons/                   # GeoJSON Polygon/MultiPolygon shapes
+src/                          # Bun orchestrator            (DRAFT skeleton)
+scripts/                      # update-planet / seed / commit-results (DRAFT)
+server/                       # bootstrap.sh, nginx conf    (DRAFT)
+.github/workflows/            # daily.yml, seed-planet.yml  (DRAFT)
 status/                       # committed status.json + index.json (generated)
 plan.json                     # committed resolved plan (generated)
 ```
 
-Today only the first block (docs + `projects/` + `regions/`) exists.
+Docs + `projects/` + `regions/` are real; `src/`, `scripts/`, `server/` and
+`.github/workflows/` exist as **draft skeletons** to make the design concrete —
+they are not yet wired up end-to-end.
 
 ---
 
