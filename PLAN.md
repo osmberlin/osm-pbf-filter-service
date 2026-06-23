@@ -420,6 +420,14 @@ annotation** (`::error file=…::`, which highlights the offending file in the r
 plus a line in the run summary (§C1). Optional toggle: also exit non-zero so the
 job is marked failed when any input was invalid.
 
+**Implementation status (pre-alpha).** The planning logic is implemented and
+unit-tested with vitest (`bun run test`): `src/geojson.ts` (polygon validation +
+bbox), `src/tags.ts` (filter parsing + the union algorithm), `src/plan.ts`
+(chain resolution, activation, per-node union, ordered osmium steps), with
+`src/config.ts` (load/validate) and `src/build.ts` (executor) on top. `bun run
+build --dry-run` emits `plan.json` without invoking osmium. The osmium execution
+path itself has **not been run end-to-end** yet.
+
 ## B5. Output, status files, HTTP headers
 
 Next to every extract, write `status.json`:
@@ -573,17 +581,20 @@ projects/                     # one folder per project (inputs)
 regions/
   regions.yaml                # static hierarchy
   polygons/                   # GeoJSON Polygon/MultiPolygon shapes
-src/                          # Bun orchestrator            (DRAFT skeleton)
-scripts/                      # update-planet / seed / commit-results (DRAFT)
+src/                          # orchestrator: config, geojson, tags, plan, build
+test/                         # vitest unit tests (geojson, tags, plan)
+package.json                  # build + test scripts (vitest is the only devDep)
+scripts/                      # update-planet / seed / commit-results / check-disk (DRAFT)
 server/                       # bootstrap.sh, nginx conf    (DRAFT)
-.github/workflows/            # daily.yml, seed-planet.yml  (DRAFT)
+.github/workflows/            # ci.yml (tests), daily.yml, seed-planet.yml
 status/                       # committed status.json + index.json (generated)
 plan.json                     # committed resolved plan (generated)
 ```
 
-Docs + `projects/` + `regions/` are real; `src/`, `scripts/`, `server/` and
-`.github/workflows/` exist as **draft skeletons** to make the design concrete —
-they are not yet wired up end-to-end.
+Docs, `projects/`, `regions/`, the `src/` planning logic and its `test/` suite
+are real and green. The osmium **execution** path (`scripts/`, `server/`, and the
+runner side of the workflows) exists but is **pre-alpha — not yet run
+end-to-end**.
 
 ---
 

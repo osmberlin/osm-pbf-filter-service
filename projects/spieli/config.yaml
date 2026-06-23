@@ -1,0 +1,56 @@
+# Real project: "spieli" — a playground finder for families.
+# Modeled on its importer's osmium tags-filter step (Hessen, playground POIs):
+# https://github.com/mfuhrmann/spieli/blob/1c774f27b2b78361ee72a2d5cca376b1da507eed/importer/import.sh#L247-L286
+#
+# id = folder name (spieli); file served at <host>/extracts/spieli/latest.osm.pbf
+
+description: Playground-related POIs (playgrounds, pitches, benches, toilets, cafes, shops, boundaries) for Hessen.
+repository: https://github.com/mfuhrmann/spieli
+homepage: https://github.com/mfuhrmann/spieli
+contact: mfuhrmann   # GitHub handle of the maintainer — replace with their OSM username
+
+area:
+  region: hessen
+
+# Verbatim from the spieli importer (import.sh L247-L286).
+filters:
+  - n/natural=tree
+  - w/natural=tree_row
+  - n/leisure=playground
+  - n/leisure=pitch
+  - n/leisure=fitness_station
+  - n/leisure=picnic_table
+  - n/amenity=bench
+  - n/amenity=shelter
+  - n/amenity=toilets
+  - n/amenity=ice_cream
+  - n/amenity=cafe
+  - n/amenity=restaurant
+  - n/highway=bus_stop
+  - n/shop=chemist
+  - n/shop=supermarket
+  - n/shop=convenience
+  - n/emergency
+  - n/playground
+  - w/leisure=playground
+  - w/leisure=pitch
+  - w/leisure=fitness_station
+  - w/leisure=picnic_table
+  - w/amenity=bench
+  - w/amenity=shelter
+  - w/amenity=toilets
+  - w/amenity=ice_cream
+  - w/amenity=cafe
+  - w/amenity=restaurant
+  - w/shop=chemist
+  - w/shop=supermarket
+  - w/shop=convenience
+  - w/playground
+  - r/leisure=playground
+  - r/leisure=pitch
+  - r/type=multipolygon
+  - r/boundary=administrative
+
+osmium:
+  extract_strategy: smart
+  add_referenced: true

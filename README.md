@@ -8,9 +8,10 @@ The design goal is **minimal manual server work**: configuration lives in this
 git repository, and all orchestration runs through CI on a self-hosted runner
 installed on the community server.
 
-> **Status: planning + draft scaffolding.** The design and example configs are
-> real; `src/`, `scripts/`, `server/` and `.github/workflows/` exist as **draft
-> skeletons** to make the design concrete — they are not yet wired up end-to-end.
+> **Status: pre-alpha.** The planning logic in `src/` is implemented and
+> unit-tested (`bun run test`, run in CI on GitHub-hosted runners). The osmium
+> **execution** path (`scripts/`, `server/`, runner workflows) exists but has not
+> been run end-to-end yet. No polygons are committed, so a live run is not wired up.
 
 ## Start here
 

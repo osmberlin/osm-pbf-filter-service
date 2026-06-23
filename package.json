@@ -3,8 +3,12 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Orchestrator that builds per-project OSM extracts from a daily planet (DRAFT).",
+  "description": "Orchestrator that builds per-project OSM extracts from a daily planet (PRE-ALPHA).",
   "scripts": {
-    "build": "bun run src/build.ts"
+    "build": "bun run src/build.ts",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "vitest": "^2.1.9"
   }
 }

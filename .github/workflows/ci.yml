@@ -1,0 +1,21 @@
+# Unit tests (vitest) for the orchestrator logic. Runs on GitHub-hosted runners
+# — NEVER the self-hosted runner — so fork PRs can't execute on the server
+# (PLAN.md §A3).
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request: {}
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun run test

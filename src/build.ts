@@ -1,183 +1,138 @@
-/**
- * DRAFT skeleton of the extract orchestrator (PLAN.md Part B4).
- *
- * What's implemented here: loading configs + region tree, and **fail-soft input
- * validation** — every referenced polygon must be a GeoJSON Polygon/MultiPolygon;
- * invalid inputs are SKIPPED and reported as GitHub Actions error annotations.
- *
- * What's still TODO: build the active DAG, compute per-node tag unions, generate
- * the osmium multi-extract configs, run osmium top-down, and write status.json /
- * index.json / plan.json.
- *
- * Note: the polygon files under regions/polygons/ are not committed yet, so until
- * they are added this will (correctly) report regions as invalid.
- */
-import { readdirSync, readFileSync, existsSync, appendFileSync } from "node:fs";
+// Orchestrator entry point (PLAN.md §B4). Loads configs, builds the plan, writes
+// plan.json for traceability, then runs osmium top-down and writes status files.
+//
+// Run `bun run build` on the server runner, or `bun run build --dry-run` to emit
+// plan.json without invoking osmium.
+//
+// PRE-ALPHA: the osmium execution path has not been run end-to-end yet. The
+// planning logic (plan.ts / tags.ts / geojson.ts) is covered by vitest.
+import { mkdirSync, writeFileSync, copyFileSync, existsSync, statSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import path from "node:path";
-import { YAML } from "bun"; // native YAML parser — https://bun.com/docs/runtime/yaml
+import { loadRegions, loadProjects } from "./config";
+import { buildPlan, type Paths, type Plan, type PlanStep } from "./plan";
+import { summaryLine } from "./github";
 
-const PROJECTS_DIR = "projects";
-const REGIONS_FILE = "regions/regions.yaml";
+const paths: Paths = {
+  planet: process.env.OSM_PLANET ?? "/srv/osm/planet/planet.osm.pbf",
+  work: process.env.OSM_WORK ?? "/srv/osm/work",
+  extracts: process.env.OSM_EXTRACTS ?? "/srv/osm/extracts",
+};
+const PUBLIC_BASE = process.env.OSM_PUBLIC_BASE ?? "https://osm.example.org/extracts";
 
-// --- GitHub Actions reporting -------------------------------------------------
-
-function ghError(file: string, msg: string): void {
-  // ::error file=...:: highlights the offending file in the Actions run.
-  console.log(`::error file=${file}::${msg}`);
+function osmiumExtractConfig(step: Extract<PlanStep, { kind: "extract-multi" }>) {
+  return {
+    directory: path.dirname(step.extracts[0]?.output ?? paths.work),
+    extracts: step.extracts.map((e) => ({
+      output: path.basename(e.output),
+      polygon: { file_name: path.resolve(e.polygon), file_type: "geojson" },
+    })),
+  };
 }
 
-function ghWarning(file: string, msg: string): void {
-  console.log(`::warning file=${file}::${msg}`);
+function osmium(args: string[]): void {
+  console.log(`+ osmium ${args.join(" ")}`);
+  execFileSync("osmium", args, { stdio: "inherit" });
 }
 
-function summaryLine(md: string): void {
-  const f = process.env.GITHUB_STEP_SUMMARY;
-  if (f) appendFileSync(f, md + "\n");
-  else console.log(md);
-}
-
-// --- GeoJSON polygon validation ----------------------------------------------
-
-type Check = { ok: boolean; detail: string };
-
-/** True only for GeoJSON Polygon/MultiPolygon (unwrapping Feature/FeatureCollection). */
-function polygonGeometryType(gj: unknown): Check {
-  if (gj == null || typeof gj !== "object") return { ok: false, detail: "not a JSON object" };
-  const t = (gj as any).type;
-
-  if (t === "Polygon" || t === "MultiPolygon") return { ok: true, detail: t };
-
-  if (t === "Feature") {
-    const g = (gj as any).geometry?.type;
-    return g === "Polygon" || g === "MultiPolygon"
-      ? { ok: true, detail: `Feature/${g}` }
-      : { ok: false, detail: `Feature geometry is ${g ?? "missing"} (need Polygon/MultiPolygon)` };
+function runStep(step: PlanStep): void {
+  if (step.kind === "extract-multi") {
+    mkdirSync(path.dirname(step.configFile), { recursive: true });
+    writeFileSync(step.configFile, JSON.stringify(osmiumExtractConfig(step), null, 2));
+    osmium(["extract", "--overwrite", "--strategy", step.strategy, "-c", step.configFile, step.input]);
+  } else if (step.kind === "tags-filter") {
+    mkdirSync(path.dirname(step.output), { recursive: true });
+    const args = ["tags-filter", "--overwrite"];
+    if (step.addReferenced) args.push("-R");
+    args.push("-o", step.output, step.input, ...step.filters);
+    osmium(args);
+  } else if (step.kind === "copy") {
+    mkdirSync(path.dirname(step.to), { recursive: true });
+    copyFileSync(step.from, step.to);
   }
-
-  if (t === "FeatureCollection") {
-    const feats = Array.isArray((gj as any).features) ? (gj as any).features : [];
-    if (feats.length === 0) return { ok: false, detail: "empty FeatureCollection" };
-    const types = feats.map((f: any) => f?.geometry?.type);
-    const allPoly = types.every((x: string) => x === "Polygon" || x === "MultiPolygon");
-    return allPoly
-      ? { ok: true, detail: `FeatureCollection(${types.join(",")})` }
-      : { ok: false, detail: `non-polygonal geometry in collection: ${types.join(",")}` };
-  }
-
-  return { ok: false, detail: `type is ${t ?? "missing"} (need Polygon/MultiPolygon)` };
 }
 
-function validatePolygonFile(file: string): Check {
-  if (!existsSync(file)) return { ok: false, detail: "file not found" };
-  let parsed: unknown;
+function sha256(file: string): string {
+  return createHash("sha256").update(readFileSync(file)).digest("hex");
+}
+
+function fileinfo(file: string, key: string): string | null {
   try {
-    parsed = JSON.parse(readFileSync(file, "utf8"));
-  } catch (e) {
-    return { ok: false, detail: `invalid JSON: ${(e as Error).message}` };
+    return execFileSync("osmium", ["fileinfo", "-e", "-g", key, file]).toString().trim();
+  } catch {
+    return null;
   }
-  return polygonGeometryType(parsed);
 }
 
-// --- Loading (fail-soft) ------------------------------------------------------
+function writeStatus(plan: Plan, projects: Awaited<ReturnType<typeof loadProjects>>): void {
+  const statePath = path.join(path.dirname(paths.planet), "update-state.json");
+  const state = existsSync(statePath) ? JSON.parse(readFileSync(statePath, "utf8")) : {};
+  const now = new Date().toISOString();
+  const index: any[] = [];
 
-type Region = { id: string; name?: string; parent: string; polygon?: string };
+  for (const p of projects) {
+    const out = path.join(paths.extracts, p.id, "latest.osm.pbf");
+    if (!existsSync(out)) continue; // skip in dry-run / when a step was skipped
+    const node = plan.nodes.find((n) => n.projects.includes(p.id));
+    const status = {
+      project: p.id,
+      description: p.description,
+      repository: p.repository,
+      homepage: p.homepage,
+      contact: p.contact,
+      file: "latest.osm.pbf",
+      size_bytes: statSync(out).size,
+      sha256: sha256(out),
+      area: p.area,
+      filters: p.filters,
+      pipeline: node ? buildPipeline(plan, node.id) : [],
+      data_timestamp: fileinfo(out, "data.timestamp.last") ?? state.data_timestamp ?? null,
+      planet_sequence_number: state.planet_sequence_number ?? null,
+      update_run_at: state.update_run_at ?? null,
+      extract_run_at: now,
+      download_url: `${PUBLIC_BASE}/${p.id}/latest.osm.pbf`,
+    };
+    writeFileSync(path.join(paths.extracts, p.id, "status.json"), JSON.stringify(status, null, 2) + "\n");
+    index.push({ project: p.id, download_url: status.download_url, data_timestamp: status.data_timestamp, extract_run_at: now });
+  }
 
-function loadRegions(): Map<string, Region> {
-  const out = new Map<string, Region>();
-  if (!existsSync(REGIONS_FILE)) {
-    ghError(REGIONS_FILE, "regions file not found");
-    return out;
-  }
-  const raw = YAML.parse(readFileSync(REGIONS_FILE, "utf8")) as { regions?: Region[] };
-  for (const r of raw?.regions ?? []) {
-    if (!r?.id || !r?.parent) {
-      ghError(REGIONS_FILE, `region missing id/parent: ${JSON.stringify(r)}`);
-      continue;
-    }
-    if (r.polygon) {
-      const p = path.join("regions", r.polygon);
-      const v = validatePolygonFile(p);
-      if (!v.ok) {
-        ghError(p, `region '${r.id}' polygon invalid: ${v.detail}`);
-        continue;
-      }
-    }
-    out.set(r.id, r);
-  }
-  return out;
+  writeFileSync(path.join(paths.extracts, "index.json"), JSON.stringify({ generated_at: now, projects: index }, null, 2) + "\n");
 }
 
-type Project = { id: string; cfg: any };
-
-function loadProjects(regions: Map<string, Region>): Project[] {
-  const out: Project[] = [];
-  for (const entry of readdirSync(PROJECTS_DIR, { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue;
-    const id = entry.name;
-    const cfgPath = path.join(PROJECTS_DIR, id, "config.yaml");
-    if (!existsSync(cfgPath)) continue;
-
-    let cfg: any;
-    try {
-      cfg = YAML.parse(readFileSync(cfgPath, "utf8"));
-    } catch (e) {
-      ghError(cfgPath, `invalid YAML: ${(e as Error).message}`);
-      continue;
-    }
-
-    // The id is the folder name; a stray `name:` can drift out of sync.
-    if (cfg && "name" in cfg) {
-      ghWarning(cfgPath, `'name' is ignored — the project id is the folder ('${id}'). Remove the 'name' field.`);
-    }
-
-    const area = cfg?.area ?? {};
-    if (!area.region && !area.polygon) {
-      ghError(cfgPath, "area must set exactly one of 'region' or 'polygon'");
-      continue;
-    }
-    if (area.region && area.polygon) {
-      ghError(cfgPath, "area sets both 'region' and 'polygon'; pick one");
-      continue;
-    }
-    if (area.region && !regions.has(area.region)) {
-      ghError(cfgPath, `unknown region '${area.region}' (not a valid id in regions.yaml)`);
-      continue;
-    }
-    if (area.polygon) {
-      const p = path.join(PROJECTS_DIR, id, area.polygon);
-      const v = validatePolygonFile(p);
-      if (!v.ok) {
-        ghError(p, `project '${id}' polygon invalid: ${v.detail}`);
-        continue;
-      }
-    }
-
-    out.push({ id, cfg });
+function buildPipeline(plan: Plan, leafId: string): string[] {
+  const chain: string[] = [];
+  let cur: string | null = leafId;
+  while (cur) {
+    chain.push(cur);
+    cur = plan.nodes.find((n) => n.id === cur)?.parent ?? null;
   }
-  return out;
+  return chain.reverse();
 }
-
-// --- Main ---------------------------------------------------------------------
 
 function main(): void {
+  const dryRun = process.argv.includes("--dry-run") || !!process.env.OSM_DRY_RUN;
+
   const regions = loadRegions();
   const projects = loadProjects(regions);
+  const plan = buildPlan(regions, projects, paths);
+
+  writeFileSync("plan.json", JSON.stringify(plan, null, 2) + "\n");
 
   summaryLine("## OSM extract build");
-  summaryLine(`- regions loaded: **${regions.size}**`);
-  summaryLine(`- valid projects: **${projects.length}**`);
+  summaryLine(`- active regions: **${plan.nodes.filter((n) => n.id !== "world").length}**`);
+  summaryLine(`- projects: **${projects.length}**`);
+  summaryLine(`- osmium steps: **${plan.steps.length}**`);
 
-  console.log(`Loaded ${regions.size} regions and ${projects.length} valid projects.`);
+  if (dryRun) {
+    console.log("dry-run: wrote plan.json; not invoking osmium.");
+    return;
+  }
 
-  // TODO (PLAN.md §B4):
-  //   1. Resolve each project to its world→…→project chain (region links or
-  //      bbox-overlap for custom polygons).
-  //   2. Build the active DAG; drop unused continents/countries.
-  //   3. Compute the per-node tag union (broadest-key-wins; broaden object types).
-  //   4. Generate osmium multi-extract --config JSON per parent.
-  //   5. Run osmium top-down (extract + tags-filter --add-referenced).
-  //   6. Write per-project status.json, extracts/index.json, and plan.json.
-  console.log("TODO: DAG + tag-union + osmium execution not implemented yet (DRAFT).");
+  for (const step of plan.steps) runStep(step);
+  writeStatus(plan, projects);
+  console.log(`Done: ${projects.length} projects, ${plan.steps.length} steps.`);
 }
 
 main();

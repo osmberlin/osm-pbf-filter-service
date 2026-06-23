@@ -26,4 +26,5 @@ europe.geojson
 africa.geojson
 germany.geojson
 france.geojson
+hessen.geojson   # Geofabrik: europe/germany/hessen
 ```

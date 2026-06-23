@@ -29,3 +29,9 @@ regions:
     name: France
     parent: europe
     polygon: ./polygons/france.geojson
+
+  # --- sub-country regions (optional, deeper layer) ---
+  - id: hessen
+    name: Hessen
+    parent: germany
+    polygon: ./polygons/hessen.geojson

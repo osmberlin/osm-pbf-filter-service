@@ -53,10 +53,12 @@ osmium:
 The `description`, `repository`, `homepage` and `contact` fields are copied into
 the published `status.json`, so every download is traceable to an owner.
 
-See the two worked examples in this folder:
+See the worked examples in this folder:
 
 - [`osm-boundary-check/`](osm-boundary-check/config.yaml) — admin boundaries, Germany
 - [`playgrounds-france/`](playgrounds-france/config.yaml) — playgrounds, France
+- [`spieli/`](spieli/config.yaml) — **real project**: playground POIs for Hessen,
+  modeled on the [spieli importer](https://github.com/mfuhrmann/spieli)
 
 Together they demonstrate the optimisation: both sit under **Europe**, so the
 Europe intermediate extract is built once with the **union** of their tags
