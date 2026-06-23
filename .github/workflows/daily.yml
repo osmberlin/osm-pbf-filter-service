@@ -23,15 +23,22 @@ jobs:
       contents: write          # only this job commits status/ + plan.json
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false   # don't leave a token in .git/config on the shared runner
 
-      - name: Guard free disk
+      - name: Guard free disk (before update)
         run: ./scripts/check-disk.sh        # fails loudly below a threshold (PLAN.md §A6)
 
       - name: Update planet (apply OSMF diffs)
         run: ./scripts/update-planet.sh
 
+      - name: Guard free disk (before build)
+        run: ./scripts/check-disk.sh        # the intermediate extracts are disk-hungry
+
       - name: Build extracts
         run: bun run build       # orchestrator (src/build.ts); no deps — uses Bun's native YAML
 
       - name: Commit resolved plan + status
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # used for a one-shot push, never persisted
         run: ./scripts/commit-results.sh

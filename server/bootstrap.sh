@@ -30,8 +30,11 @@ mkdir -p "$OSM_ROOT"/{planet,work,extracts}
 chown -R "$RUNNER_USER":"$RUNNER_USER" "$OSM_ROOT"
 chmod -R 0755 "$OSM_ROOT"
 
-echo "==> 4/5 Bun (as $RUNNER_USER)"
-sudo -u "$RUNNER_USER" bash -lc 'command -v bun >/dev/null || curl -fsSL https://bun.sh/install | bash'
+echo "==> 4/5 Bun ${BUN_VERSION:-1.3.13} (pinned, as $RUNNER_USER)"
+# Pin the Bun version for reproducibility (supply-chain: review https://bun.sh/install
+# before trusting it, or vendor a checksum-verified tarball for stricter setups).
+BUN_VERSION="${BUN_VERSION:-1.3.13}"
+sudo -u "$RUNNER_USER" bash -lc "command -v bun >/dev/null || curl -fsSL https://bun.sh/install | bash -s -- bun-v${BUN_VERSION}"
 
 echo "==> 5/5 nginx site for /srv/osm/extracts"
 install -m 0644 "$REPO_DIR/server/nginx-osm-extracts.conf" /etc/nginx/sites-available/osm-extracts.conf

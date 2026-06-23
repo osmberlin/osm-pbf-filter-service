@@ -108,6 +108,10 @@ export function loadProjects(regions: Map<string, Region>): Project[] {
         ghError(path.join(dir, area.polygon), `project '${id}' polygon invalid: ${v.detail}`);
         continue;
       }
+      // Custom polygons are validated but not scheduled yet (PLAN.md §B3, pre-alpha).
+      // Skip explicitly so the project isn't silently dropped downstream with no output.
+      ghWarning(cfgPath, `project '${id}' uses 'area.polygon', which is not scheduled yet (pre-alpha); skipping`);
+      continue;
     }
 
     const filters = Array.isArray(cfg?.filters) ? cfg.filters.map(String) : [];

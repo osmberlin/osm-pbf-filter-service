@@ -5,6 +5,13 @@ import path from "node:path";
 import type { Region, Project } from "./types";
 import { mergeFilters } from "./tags";
 
+// osmium extract --strategy, ordered by completeness. A region's geometry cut
+// uses the STRONGEST strategy any project under it requests (smart ⊇ complete_ways
+// ⊇ simple), so honoring the option never under-cuts a consumer.
+const STRATEGY_RANK: Record<string, number> = { simple: 0, complete_ways: 1, smart: 2 };
+const RANK_TO_STRATEGY = ["simple", "complete_ways", "smart"] as const;
+const DEFAULT_RANK = STRATEGY_RANK.smart;
+
 export type PlanNode = {
   id: string; // region id, or "world" (the planet)
   parent: string | null; // parent region id; null for world
@@ -13,6 +20,7 @@ export type PlanNode = {
   keepAll: boolean; // a descendant wants everything -> no tag-filter on this branch
   tagUnion: string[]; // merged filters for this intermediate node
   projects: string[]; // project ids whose leaf attaches at this region
+  strategy: string; // osmium extract strategy to cut this region's geometry
 };
 
 export type ExtractMultiStep = {
@@ -31,7 +39,7 @@ export type TagsFilterStep = {
   filters: string[];
   addReferenced: boolean;
 };
-export type CopyStep = { kind: "copy"; from: string; to: string };
+export type CopyStep = { kind: "copy"; project?: string; from: string; to: string };
 export type PlanStep = ExtractMultiStep | TagsFilterStep | CopyStep;
 
 export type Paths = { planet: string; work: string; extracts: string };
@@ -60,11 +68,11 @@ function depthOf(regions: Map<string, Region>, id: string): number {
 
 /** Active region nodes (world + every region on a project chain) with tag unions. */
 export function buildNodes(regions: Map<string, Region>, projects: Project[]): PlanNode[] {
-  type Agg = { filters: string[]; keepAll: boolean; projects: string[] };
+  type Agg = { filters: string[]; keepAll: boolean; projects: string[]; strategyRank: number };
   const acc = new Map<string, Agg>();
   const ensure = (id: string): Agg => {
     let a = acc.get(id);
-    if (!a) { a = { filters: [], keepAll: false, projects: [] }; acc.set(id, a); }
+    if (!a) { a = { filters: [], keepAll: false, projects: [], strategyRank: -1 }; acc.set(id, a); }
     return a;
   };
 
@@ -73,9 +81,11 @@ export function buildNodes(regions: Map<string, Region>, projects: Project[]): P
     if (!regionId) continue; // custom-polygon scheduling: not wired yet (pre-alpha)
     const chain = resolveChain(regions, regionId);
     const keepAll = (p.filters ?? []).length === 0;
+    const sr = STRATEGY_RANK[p.osmium.extract_strategy] ?? DEFAULT_RANK;
     for (const rid of chain) {
       const a = ensure(rid);
-      if (rid === "world") continue; // the planet is never tag-filtered as a whole
+      if (rid === "world") continue; // the planet is never tag-filtered / cut as a whole
+      a.strategyRank = Math.max(a.strategyRank, sr); // strongest strategy wins per region
       if (keepAll) a.keepAll = true;
       else a.filters.push(...p.filters);
     }
@@ -93,6 +103,7 @@ export function buildNodes(regions: Map<string, Region>, projects: Project[]): P
       keepAll: a.keepAll,
       tagUnion: a.keepAll ? [] : mergeFilters(a.filters),
       projects: [...a.projects].sort(),
+      strategy: RANK_TO_STRATEGY[a.strategyRank < 0 ? DEFAULT_RANK : a.strategyRank],
     });
   }
   nodes.sort((x, y) => x.depth - y.depth || x.id.localeCompare(y.id));
@@ -126,10 +137,11 @@ export function planSteps(
     const kids = (childrenOf.get(parent.id) ?? []).filter((k) => k.polygon);
     if (kids.length === 0) continue;
     const input = parent.id === "world" ? paths.planet : filteredFile(paths, parent);
+    const strategy = RANK_TO_STRATEGY[Math.max(...kids.map((k) => STRATEGY_RANK[k.strategy] ?? DEFAULT_RANK))];
     steps.push({
       kind: "extract-multi",
       input,
-      strategy: "smart",
+      strategy,
       configFile: path.join(paths.work, `${parent.id}.extracts.json`),
       extracts: kids.map((k) => ({ region: k.id, polygon: k.polygon!, output: geoFile(paths, k.id) })),
     });
@@ -154,7 +166,7 @@ export function planSteps(
       const input = filteredFile(paths, n);
       const out = projectOut(paths, pid);
       if ((p.filters ?? []).length === 0) {
-        steps.push({ kind: "copy", from: input, to: out });
+        steps.push({ kind: "copy", project: pid, from: input, to: out });
       } else {
         steps.push({
           kind: "tags-filter",

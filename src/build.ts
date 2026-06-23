@@ -13,6 +13,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { loadRegions, loadProjects } from "./config";
 import { buildPlan, type Paths, type Plan, type PlanStep } from "./plan";
+import type { Project } from "./types";
 import { summaryLine } from "./github";
 
 const paths: Paths = {
@@ -37,7 +38,8 @@ function osmium(args: string[]): void {
   execFileSync("osmium", args, { stdio: "inherit" });
 }
 
-function runStep(step: PlanStep): void {
+function runStep(step: PlanStep): number {
+  const t0 = Date.now();
   if (step.kind === "extract-multi") {
     mkdirSync(path.dirname(step.configFile), { recursive: true });
     writeFileSync(step.configFile, JSON.stringify(osmiumExtractConfig(step), null, 2));
@@ -52,6 +54,7 @@ function runStep(step: PlanStep): void {
     mkdirSync(path.dirname(step.to), { recursive: true });
     copyFileSync(step.from, step.to);
   }
+  return (Date.now() - t0) / 1000;
 }
 
 function sha256(file: string): string {
@@ -66,11 +69,19 @@ function fileinfo(file: string, key: string): string | null {
   }
 }
 
-function writeStatus(plan: Plan, projects: Awaited<ReturnType<typeof loadProjects>>): void {
+// status.json is written next to each extract (served by nginx) AND copied into
+// the repo-relative status/ dir so commit-results.sh can commit the audit log
+// (PLAN.md §B6). The dir is created even with zero projects so the commit step
+// always has a path to stage.
+const REPO_STATUS_DIR = process.env.OSM_STATUS_DIR ?? "status";
+
+function writeStatus(plan: Plan, projects: Project[], durations: Record<string, number>): void {
   const statePath = path.join(path.dirname(paths.planet), "update-state.json");
   const state = existsSync(statePath) ? JSON.parse(readFileSync(statePath, "utf8")) : {};
   const now = new Date().toISOString();
   const index: any[] = [];
+
+  mkdirSync(REPO_STATUS_DIR, { recursive: true });
 
   for (const p of projects) {
     const out = path.join(paths.extracts, p.id, "latest.osm.pbf");
@@ -92,13 +103,19 @@ function writeStatus(plan: Plan, projects: Awaited<ReturnType<typeof loadProject
       planet_sequence_number: state.planet_sequence_number ?? null,
       update_run_at: state.update_run_at ?? null,
       extract_run_at: now,
+      extract_duration_seconds: durations[p.id] ?? null,
       download_url: `${PUBLIC_BASE}/${p.id}/latest.osm.pbf`,
     };
-    writeFileSync(path.join(paths.extracts, p.id, "status.json"), JSON.stringify(status, null, 2) + "\n");
+    const json = JSON.stringify(status, null, 2) + "\n";
+    writeFileSync(path.join(paths.extracts, p.id, "status.json"), json); // served by nginx
+    mkdirSync(path.join(REPO_STATUS_DIR, p.id), { recursive: true });
+    writeFileSync(path.join(REPO_STATUS_DIR, p.id, "status.json"), json); // committed for the audit log
     index.push({ project: p.id, download_url: status.download_url, data_timestamp: status.data_timestamp, extract_run_at: now });
   }
 
-  writeFileSync(path.join(paths.extracts, "index.json"), JSON.stringify({ generated_at: now, projects: index }, null, 2) + "\n");
+  const indexJson = JSON.stringify({ generated_at: now, projects: index }, null, 2) + "\n";
+  writeFileSync(path.join(paths.extracts, "index.json"), indexJson);
+  writeFileSync(path.join(REPO_STATUS_DIR, "index.json"), indexJson);
 }
 
 function buildPipeline(plan: Plan, leafId: string): string[] {
@@ -130,8 +147,13 @@ function main(): void {
     return;
   }
 
-  for (const step of plan.steps) runStep(step);
-  writeStatus(plan, projects);
+  const durations: Record<string, number> = {};
+  for (const step of plan.steps) {
+    const secs = runStep(step);
+    const pid = step.kind === "tags-filter" || step.kind === "copy" ? step.project : undefined;
+    if (pid) durations[pid] = secs; // leaf-step (final extract) duration, per project
+  }
+  writeStatus(plan, projects, durations);
   console.log(`Done: ${projects.length} projects, ${plan.steps.length} steps.`);
 }
 

@@ -1,6 +1,11 @@
 # Unit tests (vitest) for the orchestrator logic. Runs on GitHub-hosted runners
 # — NEVER the self-hosted runner — so fork PRs can't execute on the server
 # (PLAN.md §A3).
+#
+# Fork PRs still run PR-authored test code here (on a throwaway GitHub-hosted VM
+# with a read-only token). REQUIRED repo setting to gate that:
+#   Settings -> Actions -> General -> Fork pull request workflows ->
+#   "Require approval for all outside collaborators" (or stricter).
 name: ci
 
 on:
@@ -16,6 +21,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false   # tests never push; don't expose the token
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
       - run: bun run test

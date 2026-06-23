@@ -23,16 +23,19 @@ pyosmium-up-to-date --server https://planet.openstreetmap.org/replication/day "$
 duration=$(( SECONDS - start ))
 
 # The real "as-of" date of the OSM data (osmosis_replication_timestamp).
-data_timestamp="$(osmium fileinfo -e -g data.timestamp.last "$PLANET")"
-seqno="$(osmium fileinfo -e -g header.option.osmosis_replication_sequence_number "$PLANET" 2>/dev/null || echo null)"
+# Tolerate missing fields (|| true) so set -e doesn't abort after the update ran.
+data_timestamp="$(osmium fileinfo -e -g data.timestamp.last "$PLANET" 2>/dev/null || true)"
+seqno="$(osmium fileinfo -e -g header.option.osmosis_replication_sequence_number "$PLANET" 2>/dev/null || true)"
 
+# Emit proper JSON types: data_timestamp as string-or-null, sequence as number-or-null.
 jq -n \
   --arg update_run_at "$update_run_at" \
   --arg data_timestamp "$data_timestamp" \
   --argjson update_duration_seconds "$duration" \
   --arg planet_sequence_number "$seqno" \
-  '{update_run_at:$update_run_at, data_timestamp:$data_timestamp,
-    update_duration_seconds:$update_duration_seconds,
-    planet_sequence_number:$planet_sequence_number}' > "$STATE"
+  '{update_run_at: $update_run_at,
+    data_timestamp: (if $data_timestamp == "" then null else $data_timestamp end),
+    update_duration_seconds: $update_duration_seconds,
+    planet_sequence_number: (if $planet_sequence_number == "" then null else ($planet_sequence_number | tonumber? // null) end)}' > "$STATE"
 
 echo "==> Planet updated: data=$data_timestamp seq=$seqno (${duration}s)"

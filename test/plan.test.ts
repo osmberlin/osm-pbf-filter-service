@@ -103,3 +103,37 @@ describe("buildPlan (osmium steps)", () => {
     });
   });
 });
+
+describe("extract strategy (honors per-project osmium.extract_strategy)", () => {
+  const withStrategy = (id: string, region: string, strategy: string): Project => ({
+    ...project(id, region, ["n/amenity=cafe"]),
+    osmium: { extract_strategy: strategy, add_referenced: true },
+  });
+
+  it("propagates a project's strategy up its whole region chain", () => {
+    const ns = buildNodes(regions, [withStrategy("p", "hessen", "complete_ways")]);
+    const byId = Object.fromEntries(ns.map((n) => [n.id, n]));
+    expect(byId.hessen.strategy).toBe("complete_ways");
+    expect(byId.germany.strategy).toBe("complete_ways");
+    expect(byId.europe.strategy).toBe("complete_ways");
+  });
+
+  it("cuts each region with the strongest strategy any project needs", () => {
+    // hessen wants complete_ways; another germany project defaults to smart.
+    const ns = buildNodes(regions, [
+      withStrategy("weak", "hessen", "complete_ways"),
+      project("strong", "germany", ["nwr/admin_level"]), // default strategy = smart
+    ]);
+    const byId = Object.fromEntries(ns.map((n) => [n.id, n]));
+    expect(byId.hessen.strategy).toBe("complete_ways");
+    expect(byId.germany.strategy).toBe("smart"); // smart ⊇ complete_ways
+  });
+
+  it("defaults the cut strategy to smart and uses it in the extract-multi step", () => {
+    const plan = buildPlan(regions, [project("p", "france", ["nwr/amenity=playground"])], paths);
+    const step = plan.steps.find(
+      (s) => s.kind === "extract-multi" && (s as any).extracts.some((e: any) => e.region === "france"),
+    ) as any;
+    expect(step.strategy).toBe("smart");
+  });
+});

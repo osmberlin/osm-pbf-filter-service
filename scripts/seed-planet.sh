@@ -14,9 +14,15 @@ BASE="https://planet.openstreetmap.org/pbf/planet-latest.osm.pbf"
 
 mkdir -p "$PLANET_DIR"
 
+# Always clean up temp files on exit (incl. a curl failure mid-download), so a
+# partial ~87GB file never lingers on the disk shared with uMap. On success the
+# data file has already been mv'd away, so this only removes leftovers.
+trap 'rm -f "$TMP" "$TMP.md5"' EXIT
+
 echo "==> Downloading planet + checksum"
-curl -fSL --retry 3 -o "$TMP"        "$BASE"
-curl -fSL --retry 3 -o "$TMP.md5"    "$BASE.md5"
+# Resume a prior partial if present; the trap still cleans up on hard failure.
+curl -fSL --retry 3 -C - -o "$TMP"        "$BASE"
+curl -fSL --retry 3      -o "$TMP.md5"    "$BASE.md5"
 
 echo "==> Verifying md5"
 # planet .md5 references "planet-latest.osm.pbf"; verify against our temp file.
@@ -24,11 +30,9 @@ expected="$(awk '{print $1}' "$TMP.md5")"
 actual="$(md5sum "$TMP" | awk '{print $1}')"
 if [[ "$expected" != "$actual" ]]; then
   echo "::error::Checksum mismatch (expected $expected, got $actual)" >&2
-  rm -f "$TMP" "$TMP.md5"
-  exit 1
+  exit 1   # trap removes the partial download
 fi
 
 echo "==> Swapping in new planet"
 mv -f "$TMP" "$PLANET"
-rm -f "$TMP.md5"
 echo "==> Seed complete: $(osmium fileinfo -e -g data.timestamp.last "$PLANET")"

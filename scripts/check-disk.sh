@@ -8,7 +8,13 @@ set -euo pipefail
 OSM_ROOT="${OSM_ROOT:-/srv/osm}"
 MIN_FREE_GB="${MIN_FREE_GB:-120}"   # tune for the 585 GB shared disk
 
-avail_gb="$(df -BG --output=avail "$OSM_ROOT" | tail -1 | tr -dc '0-9')"
+# -P forces a single, fixed-column line per filesystem (no wrapping); column 4 is
+# Available. Strip the unit suffix; bail if we couldn't parse a number.
+avail_gb="$(df -P -BG "$OSM_ROOT" | awk 'NR==2 { v = $4; sub(/[A-Za-z]+$/, "", v); print v }')"
+if ! [[ "$avail_gb" =~ ^[0-9]+$ ]]; then
+  echo "::error::Could not read free space for $OSM_ROOT (got '${avail_gb}')." >&2
+  exit 1
+fi
 echo "==> Free on $OSM_ROOT: ${avail_gb} GB (min ${MIN_FREE_GB} GB)"
 
 if (( avail_gb < MIN_FREE_GB )); then
