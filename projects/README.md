@@ -24,7 +24,10 @@ projects/
 description: One line about what this extract is for.
 repository: https://github.com/org/project   # this project's source repository
 homepage:   https://project.example.org       # public URL of the project
-contact:    osm_username                       # OSM username of a contact person
+contact:    github-user                        # GitHub user/org of the maintainer
+
+# Convention: the project folder name = the GitHub repository name, and
+# `contact` = the GitHub user/org that owns it.
 
 # WHERE to extract. Choose exactly one of `region` or `polygon`.
 area:
@@ -55,10 +58,13 @@ the published `status.json`, so every download is traceable to an owner.
 
 See the worked examples in this folder:
 
-- [`osm-boundary-check/`](osm-boundary-check/config.yaml) — admin boundaries, Germany
-- [`playgrounds-france/`](playgrounds-france/config.yaml) — playgrounds, France
+- [`osm-boundary-check/`](osm-boundary-check/config.yaml) — admin boundaries, Germany (illustrative)
+- [`playgrounds-france/`](playgrounds-france/config.yaml) — playgrounds, France (illustrative)
 - [`spieli/`](spieli/config.yaml) — **real project**: playground POIs for Hessen,
   modeled on the [spieli importer](https://github.com/mfuhrmann/spieli)
+- [`osm-boundary-checker-germany/`](osm-boundary-checker-germany/config.yaml) —
+  **real project**: admin + postal-code boundaries for Germany, modeled on
+  [osm-boundary-checker-germany](https://github.com/osmberlin/osm-boundary-checker-germany)
 
 Together they demonstrate the optimisation: both sit under **Europe**, so the
 Europe intermediate extract is built once with the **union** of their tags

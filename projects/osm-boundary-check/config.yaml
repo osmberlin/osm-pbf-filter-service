@@ -6,7 +6,7 @@
 description: Administrative boundaries for Germany.
 repository: https://github.com/example-org/osm-boundary-check   # this project's source repo
 homepage: https://osm-boundary-check.example.org               # public URL of the project
-contact: example_osm_user                                       # OSM username to reach out to
+contact: example-org                                            # GitHub user/org
 
 area:
   region: germany

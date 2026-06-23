@@ -438,7 +438,7 @@ Next to every extract, write `status.json`:
   "description": "Administrative boundaries for Germany.",
   "repository": "https://github.com/example-org/osm-boundary-check",
   "homepage": "https://osm-boundary-check.example.org",
-  "contact": "example_osm_user",
+  "contact": "example-org",
   "file": "latest.osm.pbf",
   "size_bytes": 12345678,
   "sha256": "…",

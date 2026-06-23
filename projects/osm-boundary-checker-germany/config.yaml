@@ -1,0 +1,25 @@
+# Real project: "osm-boundary-checker-germany" — checks German admin & postal-code
+# boundaries. Folder name = the GitHub repo name; contact = the GitHub org.
+# Modeled on its OSM extract step (DEFAULT_OSM_TAGS_FILTER_EXPRESSIONS):
+# https://github.com/osmberlin/osm-boundary-checker-germany/blob/main/scripts/shared/germanyOsmPbf.ts
+#
+# id = folder name; file served at <host>/extracts/osm-boundary-checker-germany/latest.osm.pbf
+
+description: Administrative and postal-code boundaries for Germany (boundary checker).
+repository: https://github.com/osmberlin/osm-boundary-checker-germany
+homepage: https://github.com/osmberlin/osm-boundary-checker-germany
+contact: osmberlin   # GitHub user/org
+
+area:
+  region: germany
+
+# Verbatim from DEFAULT_OSM_TAGS_FILTER_EXPRESSIONS in germanyOsmPbf.ts.
+filters:
+  - r/boundary=administrative
+  - w/boundary=administrative
+  - r/boundary=postal_code
+  - w/boundary=postal_code
+
+osmium:
+  extract_strategy: smart
+  add_referenced: true

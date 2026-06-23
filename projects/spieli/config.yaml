@@ -7,7 +7,7 @@
 description: Playground-related POIs (playgrounds, pitches, benches, toilets, cafes, shops, boundaries) for Hessen.
 repository: https://github.com/mfuhrmann/spieli
 homepage: https://github.com/mfuhrmann/spieli
-contact: mfuhrmann   # GitHub handle of the maintainer — replace with their OSM username
+contact: mfuhrmann   # GitHub user (maintainer)
 
 area:
   region: hessen

@@ -5,7 +5,7 @@
 description: Playgrounds in France (example to show area activation + tag union).
 repository: https://github.com/example-org/playgrounds-france   # this project's source repo
 homepage: https://playgrounds-france.example.org               # public URL of the project
-contact: another_osm_user                                       # OSM username to reach out to
+contact: example-user                                           # GitHub user/org
 
 area:
   region: france
