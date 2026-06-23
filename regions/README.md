@@ -5,7 +5,7 @@ Part B3/B4 for the full reasoning.
 
 ## Idea
 
-Cutting one country directly out of the ~80 GB planet means reading the whole
+Cutting one country directly out of the 87 GB planet means reading the whole
 planet for every project. Instead we extract in layers:
 
 ```

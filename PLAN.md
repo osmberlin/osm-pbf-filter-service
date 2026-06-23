@@ -35,28 +35,46 @@ agent itself.
 | Region hierarchy | **Static tree** (world → continents → countries) defined in [`regions/regions.yaml`](regions/regions.yaml). Continents/countries are **activated** only when a project needs them. Only **tag filtering is dynamic** (union per active node). |
 | Orchestrator language | **Bun** (TypeScript). |
 | Extract tool | **osmium-tool** (`osmium extract`, `osmium tags-filter`); **pyosmium** for updates. |
+| Server | **FOSSGIS e.V. uMap instance at Hetzner**, ~585 GB disk (see §3 / §A1). Shared with uMap. |
+| Repo visibility | **Public** — makes the runner hardening in §A3 mandatory. |
 | Doc language | English. |
 
 ---
 
-## 3. Assumptions to verify ⚠️
+## 3. Target environment
 
-These materially affect provisioning and must be confirmed before building:
+### Known facts
 
-1. **Planet size.** The note said "~8 GB", but the real
-   `planet-latest.osm.pbf` is **~80 GB** (and growing). Disk sizing below
-   assumes ~80 GB. *If you actually only need a continent (e.g. Europe ≈ 30 GB),
-   say so — it shrinks everything.*
-2. **Server specs.** CPU cores, RAM, **disk type (SSD strongly recommended)** and
-   free space, OS/distro. osmium is I/O-heavy; SSD vs HDD is the single biggest
-   speed factor.
-3. **Public hosting.** Is there already a **domain + HTTPS** (e.g.
-   `osm.example.org`) we can serve downloads from? Who administers DNS/TLS?
-4. **Repo visibility.** Public or private? This drives the **runner security**
-   model (see §A3) — a self-hosted runner on a *public* repo is dangerous if not
-   locked down.
-5. **Who has root** on the server for the one-time bootstrap, and is the runner
-   allowed limited `sudo` (e.g. `systemctl reload nginx`)?
+- **Planet size: ~87 GB.** `planet-latest.osm.pbf` is **87 GB** (compressed) —
+  source: [planet.openstreetmap.org](https://planet.openstreetmap.org/). All
+  sizing below uses this figure (and it grows over time).
+- **Server: the FOSSGIS e.V. uMap instance, hosted at Hetzner.**
+  - **Disk: ~585 GB.**
+  - Hosted at **Hetzner**; **shared** with the uMap service (we are a tenant on
+    an existing box, not a fresh server).
+  - Maintained by **Lars Lingner** and the FOSSGIS OSM-server admin group; setup
+    scripts live under the FOSSGIS GitHub account, and detailed server docs are
+    in the FOSSGIS GitLab.
+  - Sources:
+    [Förderantrag uMap-Instanz](https://www.fossgis.de/wiki/F%C3%B6rderantr%C3%A4ge/umap_instanz),
+    [FOSSGIS IT-Technik](https://www.fossgis.de/wiki/IT-Technik),
+    [Benutzer:Lars Lingner](https://www.fossgis.de/wiki/Benutzer:Lars_Lingner),
+    [OSM wiki: FOSSGIS/Server](https://wiki.openstreetmap.org/wiki/FOSSGIS/Server).
+- **Repo visibility: public.** This makes the self-hosted-runner hardening in
+  §A3 **mandatory, not optional**.
+
+### Still to confirm
+
+- **CPU / RAM and disk type** of the uMap server — not publicly documented; check
+  the FOSSGIS GitLab or ask Lars Lingner. osmium is I/O-heavy, so SSD vs HDD is
+  the single biggest speed factor.
+- **Public download host + TLS** — which domain serves the extracts and who
+  manages DNS/cert (the uMap instance already has a hostname we may be able to
+  reuse, e.g. a subdomain).
+- **OSMF diff timing** — what time daily replication diffs are reliably available
+  (drives the cron in §C2).
+- **Runner `sudo` scope** — is the runner allowed a single
+  `systemctl reload nginx` (only needed for custom data-age headers, §B5)?
 
 ---
 
@@ -99,15 +117,31 @@ The whole point: do this **once**, by hand, then never touch the server again fo
 normal operation. Capture every step as a script in `server/` so re-provisioning
 is reproducible.
 
-## A1. Sizing & OS
+## A1. The server (FOSSGIS uMap instance) & disk budget
 
-- **OS:** Linux (Ubuntu LTS or Debian assumed).
-- **Disk:** plan for the planet + a working copy + all extracts + temp space.
-  With an ~80 GB planet, budget **≥ 300 GB SSD**. (Re-confirm against
-  Assumption #1.)
-- **RAM:** more helps osmium's indexes; **16 GB+** recommended, 8 GB workable for
-  smaller data.
-- **CPU:** osmium uses multiple cores for some operations; 4+ cores fine.
+This runs on the existing **FOSSGIS e.V. uMap server at Hetzner** (sources in §3),
+**shared** with the uMap service. Known: **~585 GB disk**; CPU/RAM/disk-type to be
+confirmed via the FOSSGIS GitLab or Lars Lingner.
+
+Disk budget against the **87 GB** planet:
+
+| Item | Approx. size |
+|---|---|
+| `planet.osm.pbf` (live) | ~87 GB |
+| Re-seed headroom (old + new planet during atomic swap) | up to ~87 GB extra |
+| Intermediate extracts in `work/` (e.g. Europe ≈ 30 GB) | tens of GB, transient |
+| Final per-project extracts in `extracts/` | small–moderate, persistent |
+| **Plus whatever uMap already uses on the same disk** | unknown — confirm |
+
+→ **585 GB is comfortable for normal daily operation.** The tightest moment is a
+**re-seed** (briefly ~2× planet ≈ 174 GB) on top of uMap's existing usage — so
+confirm free space before the first re-seed, and have the daily workflow **guard
+on free disk** (§A6).
+
+- **OS / disk type:** Hetzner default (Ubuntu/Debian assumed); SSD vs HDD is the
+  biggest osmium speed factor — confirm both.
+- **Coexistence:** keep everything under `/srv/osm/`, clean up `work/` after each
+  run, and cap transient usage so we never starve uMap of disk or I/O.
 
 ## A2. Software to install (one-time)
 
@@ -123,30 +157,42 @@ is reproducible.
 A `server/bootstrap.sh` should install all of the above and create the directory
 layout in A4.
 
-## A3. Self-hosted GitHub Actions runner ⚠️ security
+## A3. Self-hosted GitHub Actions runner ⚠️ security (mandatory)
 
-Install the runner as a **systemd service** under a **dedicated unprivileged
-user** (e.g. `osmrunner`), registered against this repo with a label like
-`osm`. Workflows then target `runs-on: [self-hosted, osm]`.
+The repo is **public** and the runner sits on a **shared FOSSGIS server that also
+runs uMap**. A self-hosted runner executes whatever a workflow tells it to — so on
+a public repo this is the highest-risk part of the whole design, and the
+mitigations below are **required**, not optional. GitHub itself recommends
+*against* self-hosted runners on public repos unless locked down, because anyone
+can open a pull request that would otherwise run code on the box.
 
-**Security is the critical part:** a self-hosted runner executes whatever a
-workflow tells it to, on your server.
+**Install + isolate**
+- Run the runner as a **dedicated unprivileged user** (e.g. `osmrunner`) via a
+  **systemd service**, registered with the label `osm`
+  (`runs-on: [self-hosted, osm]`).
+- **No passwordless full `sudo`.** At most one allow-listed
+  `systemctl reload nginx` (only if we adopt custom headers, §B5).
+- Confine our footprint to `/srv/osm/` with restrictive permissions so a
+  compromised job can't reach uMap's data.
 
-- **Never let untrusted pull requests run on it.** If the repo is **public**,
-  configure Actions so workflows on the runner trigger **only** on `push` to
-  `main`, `schedule`, and `workflow_dispatch` — and require approval for
-  fork PRs (GitHub setting: *Require approval for all outside collaborators*),
-  or disable PR-triggered runs on the self-hosted label entirely.
-- Prefer a **private repo** if the configs don't need to be public. (Outputs are
-  still public via nginx; the *configs* being private is fine.)
-- Run the runner as **non-root**, with only narrowly-scoped `sudo` (e.g. a single
-  `systemctl reload nginx` if we adopt dynamic headers — see B5).
-- Consider **ephemeral**/auto-update runners to reduce drift.
-- Firewall: only expose ports 80/443 (nginx) publicly; the runner makes
-  **outbound** connections to GitHub (no inbound needed).
+**Never run untrusted PR code**
+- Settings → Actions → General → **Fork pull request workflows → Require approval
+  for all outside collaborators**.
+- Gate the pipeline workflows to safe triggers only: `push` to `main`,
+  `schedule`, `workflow_dispatch` — **never** `pull_request` from forks.
+- Run any PR-validation (e.g. config linting) on **GitHub-hosted** runners, not
+  the self-hosted one. Consider a dedicated runner group so only the pipeline
+  workflows can target `osm`.
 
-> This is the one place where getting it wrong is costly. Flagging it explicitly
-> so we discuss repo visibility before going live.
+**Reduce drift / exposure**
+- Prefer **ephemeral** runners (clean checkout per job) + auto-update.
+- `GITHUB_TOKEN` **read-only by default**; grant `contents: write` only on the
+  commit step.
+- Firewall: expose only 80/443 (nginx); the runner needs **outbound** to GitHub
+  only (no inbound).
+
+> Because the box also hosts uMap, this setup must be coordinated with **Lars
+> Lingner / the FOSSGIS OSM-server admins** before registering the runner.
 
 ## A4. Directory layout on the server
 
@@ -252,7 +298,7 @@ filters:
 Defined in [`regions/regions.yaml`](regions/regions.yaml):
 `world → continents → countries`, each with a polygon.
 
-Why a tree at all: cutting Germany directly from the ~80 GB planet means reading
+Why a tree at all: cutting Germany directly from the 87 GB planet means reading
 the whole planet **per project**. Layering (`world → europe → germany`) means the
 expensive planet read happens **once**, then each continent is read once, etc.
 
@@ -505,17 +551,21 @@ Today only the first block (docs + `projects/` + `regions/`) exists.
 
 ## 7. Open questions for discussion
 
-1. **Planet vs. continent only** — confirm we truly need the global planet
-   (~80 GB) and not just Europe (Assumption #1). Biggest cost lever.
-2. **Repo public or private** — drives the runner security model (§A3).
-3. **Domain + TLS** — what host do downloads live on, and who manages it?
-4. **Country layer depth** — always include a country layer, or only add one when
+(Server, planet size, and repo visibility are settled — see §3. Remaining
+design/ops questions:)
+
+1. **Coexistence with uMap** — confirm disk headroom and that our daily I/O won't
+   impact the uMap service on the shared box (§A1), and agree the runner setup
+   with the FOSSGIS admins (§A3).
+2. **Download host + TLS** — reuse a subdomain of the uMap instance, or a new
+   host? Who manages the cert?
+3. **Country layer depth** — always include a country layer, or only add one when
    ≥N projects share a country (to avoid pointless intermediate extracts)?
-5. **Custom polygons** — do projects need arbitrary polygons (cities, custom
+4. **Custom polygons** — do projects need arbitrary polygons (cities, custom
    boundaries), or always a named region? Affects the overlap-detection work.
-6. **Commit polygons to git?** Recommended (small, reproducible) — confirm.
-7. **HTTP data-age headers** — is `Last-Modified` + `status.json` enough, or do
+5. **Commit polygons to git?** Recommended (small, reproducible) — confirm.
+6. **HTTP data-age headers** — is `Last-Modified` + `status.json` enough, or do
    we need the custom `X-OSM-*` headers (which add a small nginx-reload step)?
-8. **Schedule timing** — what time are OSMF daily diffs reliably available, so we
+7. **Schedule timing** — what time are OSMF daily diffs reliably available, so we
    schedule `daily.yml` after them?
 ```
