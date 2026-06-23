@@ -1,5 +1,12 @@
-name: osm-boundary-check
+# The project id is THIS FOLDER's name (osm-boundary-check). There is no `name:`
+# field, and the download file is always `latest.osm.pbf` — both are derived, so
+# nothing here can drift out of sync.
+#   -> served at <host>/extracts/osm-boundary-check/latest.osm.pbf
+
 description: Administrative boundaries for Germany.
+repository: https://github.com/example-org/osm-boundary-check   # this project's source repo
+homepage: https://osm-boundary-check.example.org               # public URL of the project
+contact: example_osm_user                                       # OSM username to reach out to
 
 area:
   region: germany
@@ -12,5 +19,3 @@ filters:
 osmium:
   extract_strategy: complete_ways
   add_referenced: true
-# output.filename defaults to latest.osm.pbf
-#   -> served at <host>/extracts/osm-boundary-check/latest.osm.pbf

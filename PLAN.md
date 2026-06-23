@@ -192,6 +192,7 @@ can open a pull request that would otherwise run code on the box.
   only (no inbound).
 
 **Packages & docs (for manual setup / further research)**
+- [Hosting your own runners — how the self-hosted runner feature works (start here)](https://docs.github.com/en/actions/hosting-your-own-runners)
 - [Runner application releases](https://github.com/actions/runner/releases) — the
   package to download and install on the server.
 - [Adding a self-hosted runner](https://docs.github.com/en/actions/how-tos/manage-runners/self-hosted-runners/add-runners)
@@ -299,7 +300,9 @@ declaring an **area** and **tag filters**. Full schema and two worked examples
 are in [projects/README.md](projects/README.md). Minimal example:
 
 ```yaml
-name: osm-boundary-check
+# project id = folder name (no `name:` field); full field list — description,
+# repository, homepage, contact — is in projects/README.md
+description: Administrative boundaries for Germany.
 area: { region: germany }
 filters:
   - nwr/boundary=administrative
@@ -424,6 +427,10 @@ Next to every extract, write `status.json`:
 ```json
 {
   "project": "osm-boundary-check",
+  "description": "Administrative boundaries for Germany.",
+  "repository": "https://github.com/example-org/osm-boundary-check",
+  "homepage": "https://osm-boundary-check.example.org",
+  "contact": "example_osm_user",
   "file": "latest.osm.pbf",
   "size_bytes": 12345678,
   "sha256": "…",
@@ -442,7 +449,9 @@ Next to every extract, write `status.json`:
 ```
 
 This covers every "how old is the data" question from the brief: the data's own
-date, the last update-run, the last extract-run, and per-extract timing.
+date, the last update-run, the last extract-run, and per-extract timing. The
+`description`/`repository`/`homepage`/`contact` fields are copied straight from
+the project's `config.yaml`, so every download is traceable to an owner.
 
 A top-level `extracts/index.json` lists all projects with their timestamps.
 

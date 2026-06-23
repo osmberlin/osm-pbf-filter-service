@@ -17,8 +17,14 @@ projects/
 ## config.yaml schema
 
 ```yaml
-name: my-project                 # human-readable; defaults to folder name
+# No `name:` field — the project id is the FOLDER name (and the URL segment).
+# No output filename either — the file is always `latest.osm.pbf`. Both are
+# derived, so they can't drift out of sync.
+
 description: One line about what this extract is for.
+repository: https://github.com/org/project   # this project's source repository
+homepage:   https://project.example.org       # public URL of the project
+contact:    osm_username                       # OSM username of a contact person
 
 # WHERE to extract. Choose exactly one of `region` or `polygon`.
 area:
@@ -42,12 +48,10 @@ filters:
 osmium:
   extract_strategy: complete_ways   # complete_ways | smart | simple
   add_referenced: true              # keep nodes/members referenced after tag-filter
-
-# Output (optional) — you normally omit this.
-output:
-  filename: latest.osm.pbf          # default; served at
-                                    #   <host>/extracts/<project-id>/latest.osm.pbf
 ```
+
+The `description`, `repository`, `homepage` and `contact` fields are copied into
+the published `status.json`, so every download is traceable to an owner.
 
 See the two worked examples in this folder:
 

@@ -1,5 +1,11 @@
-name: playgrounds-france
+# The project id is THIS FOLDER's name (playgrounds-france). There is no `name:`
+# field, and the download file is always `latest.osm.pbf`.
+#   -> served at <host>/extracts/playgrounds-france/latest.osm.pbf
+
 description: Playgrounds in France (example to show area activation + tag union).
+repository: https://github.com/example-org/playgrounds-france   # this project's source repo
+homepage: https://playgrounds-france.example.org               # public URL of the project
+contact: another_osm_user                                       # OSM username to reach out to
 
 area:
   region: france
@@ -10,5 +16,3 @@ filters:
 osmium:
   extract_strategy: complete_ways
   add_referenced: true
-# output.filename defaults to latest.osm.pbf
-#   -> served at <host>/extracts/playgrounds-france/latest.osm.pbf

@@ -26,6 +26,10 @@ function ghError(file: string, msg: string): void {
   console.log(`::error file=${file}::${msg}`);
 }
 
+function ghWarning(file: string, msg: string): void {
+  console.log(`::warning file=${file}::${msg}`);
+}
+
 function summaryLine(md: string): void {
   const f = process.env.GITHUB_STEP_SUMMARY;
   if (f) appendFileSync(f, md + "\n");
@@ -119,6 +123,11 @@ function loadProjects(regions: Map<string, Region>): Project[] {
     } catch (e) {
       ghError(cfgPath, `invalid YAML: ${(e as Error).message}`);
       continue;
+    }
+
+    // The id is the folder name; a stray `name:` can drift out of sync.
+    if (cfg && "name" in cfg) {
+      ghWarning(cfgPath, `'name' is ignored — the project id is the folder ('${id}'). Remove the 'name' field.`);
     }
 
     const area = cfg?.area ?? {};
