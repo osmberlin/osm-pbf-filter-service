@@ -154,8 +154,8 @@ on free disk** (§A6).
 | `nginx` | serve extracts |
 | GitHub Actions runner | execute workflows on this machine |
 
-A `server/bootstrap.sh` should install all of the above and create the directory
-layout in A4.
+[`server/bootstrap.sh`](server/bootstrap.sh) installs all of the above and creates
+the directory layout in A4.
 
 ## A3. Self-hosted GitHub Actions runner ⚠️ security (mandatory)
 
@@ -228,7 +228,9 @@ orchestrator reads configs from there and writes outputs into `/srv/osm/`.
 
 ## A5. nginx
 
-Serve `/srv/osm/extracts` as static files with autoindex off and:
+Serve `/srv/osm/extracts` as static files (config:
+[`server/nginx-osm-extracts.conf`](server/nginx-osm-extracts.conf)) with autoindex
+off and:
 
 - `Last-Modified` (from file mtime = when the extract was produced) — enables
   conditional GETs / caching.
@@ -342,7 +344,10 @@ Resolving a project to a chain:
 
 ## B4. The orchestrator (Bun)
 
-Pure planning + shelling out to `osmium`. Steps:
+Implemented under [`src/`](src/build.ts): [build.ts](src/build.ts) (entry),
+[config.ts](src/config.ts) (load + validate), [geojson.ts](src/geojson.ts),
+[tags.ts](src/tags.ts) (tag union), [plan.ts](src/plan.ts) (DAG + steps). Pure
+planning + shelling out to `osmium`. Steps:
 
 **1. Load & validate** all `projects/*/config.yaml` + `regions/regions.yaml` and
 every referenced GeoJSON polygon — see **Input validation** below. Invalid inputs
@@ -503,8 +508,11 @@ URL is stable across runs — consumers hard-code it and check `status.json` /
 
 # Part C — CI/CD workflows (GitHub Actions)
 
-All workflows run on `runs-on: [self-hosted, osm]`. A `concurrency` group
-prevents two pipeline runs from touching the planet at once.
+The pipeline workflows ([daily.yml](.github/workflows/daily.yml),
+[seed-planet.yml](.github/workflows/seed-planet.yml)) run on
+`runs-on: [self-hosted, osm]` with a `concurrency` group so two runs never touch
+the planet at once. Unit tests ([ci.yml](.github/workflows/ci.yml)) run on
+**GitHub-hosted** runners, never the self-hosted one (§A3).
 
 ## C1. Logging & observability
 
@@ -517,7 +525,7 @@ prevents two pipeline runs from touching the planet at once.
   they surface at the top of the run and on the offending file.
 - The committed `plan.json` + `status/**` give a durable record outside the logs.
 
-## C2. `daily.yml` — update + extract (scheduled)
+## C2. [`daily.yml`](.github/workflows/daily.yml) — update + extract (scheduled)
 
 Runs the update, then the extract, in order, on a schedule.
 
@@ -547,7 +555,7 @@ jobs:
 > `workflow_run`. Single workflow is simpler given one runner with local data, so
 > that's the default here.
 
-## C3. `seed-planet.yml` — full re-download (manual only)
+## C3. [`seed-planet.yml`](.github/workflows/seed-planet.yml) — full re-download (manual only)
 
 ```yaml
 name: seed-planet
@@ -568,33 +576,49 @@ jobs:
 
 ---
 
-## 5. Repository layout (target)
+## 5. Repository layout & built files
 
-```
-PLAN.md                       # this document
-README.md
-ZUSAMMENFASSUNG.de.md         # short German one-pager for FOSSGIS
-.gitignore
-projects/                     # one folder per project (inputs)
-  osm-boundary-check/config.yaml
-  playgrounds-france/config.yaml
-regions/
-  regions.yaml                # static hierarchy
-  polygons/                   # GeoJSON Polygon/MultiPolygon shapes
-src/                          # orchestrator: config, geojson, tags, plan, build
-test/                         # vitest unit tests (geojson, tags, plan)
-package.json                  # build + test scripts (vitest is the only devDep)
-scripts/                      # update-planet / seed / commit-results / check-disk (DRAFT)
-server/                       # bootstrap.sh, nginx conf    (DRAFT)
-.github/workflows/            # ci.yml (tests), daily.yml, seed-planet.yml
-status/                       # committed status.json + index.json (generated)
-plan.json                     # committed resolved plan (generated)
-```
-
-Docs, `projects/`, `regions/`, the `src/` planning logic and its `test/` suite
-are real and green. The osmium **execution** path (`scripts/`, `server/`, and the
-runner side of the workflows) exists but is **pre-alpha — not yet run
+Links point at the actual files in this repo. The planning logic and its tests
+are real and green; the osmium **execution** path is **pre-alpha — not yet run
 end-to-end**.
+
+**Docs**
+- [PLAN.md](PLAN.md) — this document
+- [README.md](README.md) · [ZUSAMMENFASSUNG.de.md](ZUSAMMENFASSUNG.de.md) — German one-pager
+
+**Inputs — configuration (committed by hand)**
+- [projects/](projects/README.md) — one folder per project (schema + conventions in the README)
+  - [osm-boundary-check/config.yaml](projects/osm-boundary-check/config.yaml) — illustrative (admin boundaries, Germany)
+  - [playgrounds-france/config.yaml](projects/playgrounds-france/config.yaml) — illustrative (playgrounds, France)
+  - [spieli/config.yaml](projects/spieli/config.yaml) — **real** (playground POIs, Hessen)
+  - [osm-boundary-checker-germany/config.yaml](projects/osm-boundary-checker-germany/config.yaml) — **real** (admin + postal-code boundaries, Germany)
+- [regions/regions.yaml](regions/regions.yaml) — the static hierarchy ([README](regions/README.md))
+  - [regions/polygons/](regions/polygons/README.md) — GeoJSON Polygon/MultiPolygon shapes (sources documented; not committed yet)
+
+**Orchestrator — Bun, pre-alpha** (`bun run build`; `bun run build --dry-run` plans only)
+- [src/build.ts](src/build.ts) — entry point: load → plan → write `plan.json` → run osmium → write status files
+- [src/config.ts](src/config.ts) — load + fail-soft validate region/project configs (IO; Bun's native YAML)
+- [src/geojson.ts](src/geojson.ts) — pure GeoJSON polygon validation + bounding boxes
+- [src/tags.ts](src/tags.ts) — pure osmium tags-filter parsing + per-node **tag union**
+- [src/plan.ts](src/plan.ts) — pure planning: region chains, active-region selection, ordered osmium steps
+- [src/github.ts](src/github.ts) — Actions error/warning annotations + step summary
+- [src/types.ts](src/types.ts) — shared, dependency-free types
+- Tests (vitest): [test/geojson.test.ts](test/geojson.test.ts) · [test/tags.test.ts](test/tags.test.ts) · [test/plan.test.ts](test/plan.test.ts)
+- [package.json](package.json) — `build` + `test` scripts (vitest is the only devDep)
+
+**Server provisioning** (Part A)
+- [server/bootstrap.sh](server/bootstrap.sh) — one-time install + data dirs + nginx site
+- [server/nginx-osm-extracts.conf](server/nginx-osm-extracts.conf) — static download host
+
+**CI/CD** (Part C)
+- [.github/workflows/ci.yml](.github/workflows/ci.yml) — vitest on **GitHub-hosted** runners (never self-hosted)
+- [.github/workflows/daily.yml](.github/workflows/daily.yml) — update + extract + commit (self-hosted)
+- [.github/workflows/seed-planet.yml](.github/workflows/seed-planet.yml) — manual full re-download
+- Scripts: [update-planet.sh](scripts/update-planet.sh) · [seed-planet.sh](scripts/seed-planet.sh) · [commit-results.sh](scripts/commit-results.sh) · [check-disk.sh](scripts/check-disk.sh)
+
+**Generated each run (committed metadata, never binaries)**
+- `status/` — per-project `status.json` + `index.json`
+- `plan.json` — the resolved plan (also produced by `--dry-run`)
 
 ---
 
