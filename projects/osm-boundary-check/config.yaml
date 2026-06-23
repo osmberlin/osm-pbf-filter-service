@@ -1,0 +1,17 @@
+name: osm-boundary-check
+description: Administrative boundaries for Germany.
+
+area:
+  region: germany
+
+# Keep administrative boundary relations/ways and anything carrying admin_level.
+filters:
+  - nwr/boundary=administrative
+  - nwr/admin_level
+
+osmium:
+  extract_strategy: complete_ways
+  add_referenced: true
+
+output:
+  filename: osm-boundary-check.osm.pbf

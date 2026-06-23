@@ -1,0 +1,15 @@
+name: playgrounds-france
+description: Playgrounds in France (example to show area activation + tag union).
+
+area:
+  region: france
+
+filters:
+  - nwr/amenity=playground
+
+osmium:
+  extract_strategy: complete_ways
+  add_referenced: true
+
+output:
+  filename: playgrounds-france.osm.pbf

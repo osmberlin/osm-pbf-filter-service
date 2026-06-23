@@ -1,0 +1,20 @@
+# OSM data + working files never belong in git (see PLAN.md "Git traceability").
+# Only configs, the resolved plan, and status/metadata are committed.
+*.osm.pbf
+*.osm.bz2
+*.osc
+*.osc.gz
+data/
+work/
+extracts/
+planet/
+
+# Bun / Node
+node_modules/
+bun.lockb.bak
+*.log
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

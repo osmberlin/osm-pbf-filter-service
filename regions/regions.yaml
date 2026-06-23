@@ -1,0 +1,28 @@
+# Static region hierarchy. Shapes are fixed here; activation + tag filtering are
+# computed dynamically by the orchestrator (see PLAN.md Part B3/B4).
+#
+# Only the regions actually referenced by a project (directly or by polygon
+# overlap) are built on a given run. Add more continents/countries as needed.
+
+regions:
+  # --- continents (parent: world = the full planet) ---
+  - id: europe
+    name: Europe
+    parent: world
+    polygon: ./polygons/europe.poly
+
+  - id: africa
+    name: Africa
+    parent: world
+    polygon: ./polygons/africa.poly
+
+  # --- countries (optional intermediate layer) ---
+  - id: germany
+    name: Germany
+    parent: europe
+    polygon: ./polygons/germany.poly
+
+  - id: france
+    name: France
+    parent: europe
+    polygon: ./polygons/france.poly
