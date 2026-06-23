@@ -31,9 +31,7 @@ jobs:
         run: ./scripts/update-planet.sh
 
       - name: Build extracts
-        run: |
-          bun install --frozen-lockfile || bun install
-          bun run build                     # the orchestrator (src/build.ts)
+        run: bun run build       # orchestrator (src/build.ts); no deps — uses Bun's native YAML
 
       - name: Commit resolved plan + status
         run: ./scripts/commit-results.sh

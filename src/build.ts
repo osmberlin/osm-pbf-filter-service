@@ -14,7 +14,7 @@
  */
 import { readdirSync, readFileSync, existsSync, appendFileSync } from "node:fs";
 import path from "node:path";
-import { parse as parseYaml } from "yaml";
+import { YAML } from "bun"; // native YAML parser — https://bun.com/docs/runtime/yaml
 
 const PROJECTS_DIR = "projects";
 const REGIONS_FILE = "regions/regions.yaml";
@@ -88,7 +88,7 @@ function loadRegions(): Map<string, Region> {
     ghError(REGIONS_FILE, "regions file not found");
     return out;
   }
-  const raw = parseYaml(readFileSync(REGIONS_FILE, "utf8")) as { regions?: Region[] };
+  const raw = YAML.parse(readFileSync(REGIONS_FILE, "utf8")) as { regions?: Region[] };
   for (const r of raw?.regions ?? []) {
     if (!r?.id || !r?.parent) {
       ghError(REGIONS_FILE, `region missing id/parent: ${JSON.stringify(r)}`);
@@ -119,7 +119,7 @@ function loadProjects(regions: Map<string, Region>): Project[] {
 
     let cfg: any;
     try {
-      cfg = parseYaml(readFileSync(cfgPath, "utf8"));
+      cfg = YAML.parse(readFileSync(cfgPath, "utf8"));
     } catch (e) {
       ghError(cfgPath, `invalid YAML: ${(e as Error).message}`);
       continue;
