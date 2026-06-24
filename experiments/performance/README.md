@@ -35,7 +35,8 @@ needs Docker.
 - **Cross-check:** at the end of each scenario we also read the container's cgroup
   `memory.peak` as `_container_peak`, to sanity-check the per-step `%M` numbers.
 - Results are written as JSON Lines to `results/<scenario>.jsonl` (committed).
-  [`report.ts`](report.ts) aggregates them into [`REPORT.md`](REPORT.md).
+  [`report.ts`](report.ts) renders them into a standalone **[`report.html`](report.html)**
+  (research question → data table → interpretation; open it in a browser).
 
 ## Layout
 
@@ -44,7 +45,7 @@ Dockerfile          # debian + osmium-tool + GNU time
 lib.sh              # measure() helper + shared BBOX/TAGS (runs in the container)
 scenarios/*.sh      # one file per scenario; each calls measure()
 run.sh              # host: build image, run scenario(s) in Docker, capture results
-report.ts           # host (bun): results/*.jsonl -> REPORT.md (between AUTO markers)
+report.ts           # host (bun): results/*.jsonl -> report.html (standalone)
 results/*.jsonl     # per-scenario measurements (committed)
 work/, data/        # gitignored (pbf outputs, logs, the input symlink)
 ```
@@ -55,7 +56,8 @@ work/, data/        # gitignored (pbf outputs, logs, the input symlink)
 cd experiments/performance
 ./run.sh                 # run ALL scenarios
 ./run.sh 03-strategy-smart 06-region-then-tag   # run only some
-bun report.ts            # regenerate REPORT.md from whatever results exist
+bun report.ts            # regenerate report.html from whatever results exist
+open report.html         # view in the default browser (macOS)
 ```
 
 **Add a scenario without rerunning everything:** drop a new

@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>osmium performance experiment</title>
+<style>
+  :root { --bg:#fafafa; --card:#fff; --ink:#1a1a1a; --muted:#666; --line:#e3e3e3; --accent:#2563eb; --bar:#dbe6ff; --good:#16a34a; }
+  @media (prefers-color-scheme: dark){ :root{ --bg:#15171a; --card:#1e2126; --ink:#e8e8e8; --muted:#9aa0a6; --line:#33383f; --accent:#6ea8ff; --bar:#27324a; } }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
+  .wrap { max-width:880px; margin:0 auto; padding:32px 20px 64px; }
+  h1 { font-size:1.7rem; margin:0 0 4px; }
+  .sub { color:var(--muted); margin:0 0 24px; }
+  .keys { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:10px; margin:0 0 28px; }
+  .key { background:var(--card); border:1px solid var(--line); border-left:4px solid var(--accent); border-radius:8px; padding:10px 12px; font-size:.9rem; }
+  .key b { display:block; font-size:.72rem; letter-spacing:.04em; text-transform:uppercase; color:var(--muted); margin-bottom:2px; }
+  details { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:8px 14px; margin:0 0 28px; }
+  summary { cursor:pointer; font-weight:600; }
+  details ul { margin:8px 0; } details code { white-space:nowrap; }
+  .card { position:relative; background:var(--card); border:1px solid var(--line); border-radius:12px; padding:20px 22px 6px; margin:0 0 22px; }
+  .qno { position:absolute; top:-12px; left:18px; background:var(--accent); color:#fff; font-size:.72rem; font-weight:700; letter-spacing:.05em; padding:3px 9px; border-radius:20px; }
+  .card h2 { font-size:1.18rem; margin:6px 0 2px; }
+  .card h3 { font-size:.95rem; margin:14px 0 6px; color:var(--muted); }
+  .ctx { color:var(--muted); margin:0 0 14px; font-size:.92rem; }
+  table { width:100%; border-collapse:collapse; margin:6px 0 4px; font-size:.92rem; }
+  th, td { text-align:left; padding:7px 10px; border-bottom:1px solid var(--line); }
+  thead th { font-size:.72rem; letter-spacing:.04em; text-transform:uppercase; color:var(--muted); border-bottom:2px solid var(--line); }
+  tbody th { font-weight:600; }
+  td.num { position:relative; text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+  td.num .bar { position:absolute; right:0; top:50%; transform:translateY(-50%); height:60%; width:var(--w); background:var(--bar); border-radius:3px; z-index:0; }
+  td.num .v { position:relative; z-index:1; }
+  td.num.accent .v { font-weight:700; color:var(--accent); }
+  td.r { text-align:right; font-variant-numeric:tabular-nums; } td.c { text-align:center; }
+  tr.total th, tr.total td { border-top:2px solid var(--line); border-bottom:none; font-weight:700; }
+  .pill { display:inline-block; font-size:.68rem; color:var(--muted); border:1px solid var(--line); border-radius:20px; padding:1px 7px; vertical-align:middle; }
+  .two { display:grid; grid-template-columns:1fr 1fr; gap:18px; }
+  @media (max-width:640px){ .two{ grid-template-columns:1fr; } }
+  .interp { margin:14px 0 16px; }
+  .verdict { background:color-mix(in srgb, var(--good) 12%, transparent); border-left:4px solid var(--good); border-radius:6px; padding:9px 12px; margin:0 0 10px; font-weight:600; }
+  .interp ul { margin:0; padding-left:20px; } .interp li { margin:4px 0; }
+  code { background:color-mix(in srgb, var(--ink) 8%, transparent); padding:1px 5px; border-radius:4px; font-size:.88em; }
+  footer { color:var(--muted); font-size:.82rem; margin-top:30px; border-top:1px solid var(--line); padding-top:14px; }
+</style></head>
+<body><div class="wrap">
+  <h1>osmium performance experiment</h1>
+  <p class="sub">Filtering a country extract — answering the open questions in PLAN&nbsp;§B8. Generated 2026-06-24 04:45 UTC.</p>
+
+  <div class="keys">
+    <div class="key"><b>Input</b>germany-latest.osm.pbf · 4.4 GB</div>
+    <div class="key"><b>Sub-region</b>~Hessen bbox</div>
+    <div class="key"><b>Tags</b>boundaries + playground POIs (sparse)</div>
+    <div class="key"><b>Environment</b>Docker (Linux), GNU time</div>
+  </div>
+
+  <details><summary>Method — how RAM &amp; time were measured</summary>
+    <ul>
+      <li>Each osmium step wrapped with <code>/usr/bin/time -f '%e %M'</code> → wall seconds + peak resident set size (RAM).</li>
+      <li>Per-scenario cgroup <code>memory.peak</code> recorded as a cross-check (agrees with per-step RAM).</li>
+      <li>Bars in each table are relative to the largest value in that table — for quick visual comparison.</li>
+      <li>Toolchain: <code>osmium version 1.15.0 · time (GNU Time) UNKNOWN</code></li>
+      <li><strong>Caveat:</strong> Docker-on-macOS wall-times are indicative (VM I/O); peak RAM transfers well. The country file under-counts data volume vs the 87 GB planet but exercises realistic RAM (the node-ID space is global). Re-run on the planet/server before final sizing.</li>
+    </ul>
+  </details>
+
+  
+<section class="card">
+  <span class="qno">Q1</span>
+  <h2>Does the RAM fit the shared server?</h2>
+  <p class="ctx">Concern from PLAN §B8: the planet is 87&nbsp;GB — will osmium need huge RAM,
+  and will it crowd out uMap?</p>
+  <table><thead><tr><th>osmium operation</th><th>Wall time</th><th>Peak RAM</th><th>Output</th></tr></thead><tbody><tr><th scope="row">extract <span class="pill">simple</span></th><td class="num"><span class="bar" style="--w:38.74092009685231%"></span><span class="v">25.6 s</span></td><td class="num"><span class="bar" style="--w:57.94548939271692%"></span><span class="v">2.2 GB</span></td><td class="num"><span class="bar" style="--w:99.09787865857066%"></span><span class="v">616 MB</span></td></tr><tr><th scope="row">extract <span class="pill">complete_ways</span></th><td class="num"><span class="bar" style="--w:77.6180387409201%"></span><span class="v">51.3 s</span></td><td class="num"><span class="bar" style="--w:95.54523104671124%"></span><span class="v">3.6 GB</span></td><td class="num"><span class="bar" style="--w:99.89042890616763%"></span><span class="v">621 MB</span></td></tr><tr><th scope="row">extract <span class="pill">smart</span></th><td class="num"><span class="bar" style="--w:95.15738498789347%"></span><span class="v">62.9 s</span></td><td class="num"><span class="bar" style="--w:100%"></span><span class="v">3.8 GB</span></td><td class="num"><span class="bar" style="--w:100%"></span><span class="v">622 MB</span></td></tr><tr><th scope="row">tags-filter <span class="pill">include refs</span></th><td class="num"><span class="bar" style="--w:100%"></span><span class="v">66.1 s</span></td><td class="num"><span class="bar" style="--w:56.8977083789488%"></span><span class="v">2.2 GB</span></td><td class="num"><span class="bar" style="--w:8.526630764067617%"></span><span class="v">53 MB</span></td></tr><tr><th scope="row">tags-filter <span class="pill">-R omit refs</span></th><td class="num"><span class="bar" style="--w:35.562953995157386%"></span><span class="v">23.5 s</span></td><td class="num"><span class="bar" style="--w:6.451951542127696%"></span><span class="v">252 MB</span></td><td class="num"><span class="bar" style="--w:2.5306302790679567%"></span><span class="v">16 MB</span></td></tr></tbody></table>
+  <div class="interp">
+    <p class="verdict">Verdict: bounded at ~4&nbsp;GB — not proportional to the 87&nbsp;GB file. Budget ≥ 8&nbsp;GB headroom and re-measure on the planet.</p>
+    <ul>
+      <li>Peak RAM tracks the <strong>global node-ID index</strong>, not the output size — a 16&nbsp;MB result still cost GBs.</li>
+      <li><code>extract</code> peaked ~4&nbsp;GB; <code>tags-filter</code> with referenced objects ~2.2&nbsp;GB; with <code>-R</code> only ~0.25&nbsp;GB.</li>
+      <li>osmium streams the file, so RAM won't explode on the planet — but expect <em>somewhat</em> more than on a country (more ways/relations to track).</li>
+    </ul>
+  </div>
+</section>
+  
+<section class="card">
+  <span class="qno">Q2</span>
+  <h2>Which extract strategy: simple / complete_ways / smart?</h2>
+  <p class="ctx">These cut the region geometry. Trade-off: completeness of ways &amp; relations vs cost.</p>
+  <table><thead><tr><th>strategy</th><th>Wall time</th><th>Peak RAM</th><th>Output</th></tr></thead><tbody><tr><th scope="row">simple <span class="pill">1 pass</span></th><td class="num"><span class="bar" style="--w:40.712468193384225%"></span><span class="v">25.6 s</span></td><td class="num"><span class="bar" style="--w:57.94548939271692%"></span><span class="v">2.2 GB</span></td><td class="num"><span class="bar" style="--w:99.09787865857066%"></span><span class="v">616 MB</span></td></tr><tr><th scope="row">complete_ways <span class="pill">2 passes · osmium default</span></th><td class="num"><span class="bar" style="--w:81.56806615776081%"></span><span class="v">51.3 s</span></td><td class="num"><span class="bar" style="--w:95.54523104671124%"></span><span class="v">3.6 GB</span></td><td class="num"><span class="bar" style="--w:99.89042890616763%"></span><span class="v">621 MB</span></td></tr><tr><th scope="row">smart <span class="pill">3 passes</span></th><td class="num"><span class="bar" style="--w:100%"></span><span class="v">62.9 s</span></td><td class="num"><span class="bar" style="--w:100%"></span><span class="v">3.8 GB</span></td><td class="num"><span class="bar" style="--w:100%"></span><span class="v">622 MB</span></td></tr></tbody></table>
+  <div class="interp">
+    <p class="verdict">Verdict: use <strong>smart</strong> for boundary projects; <strong>complete_ways</strong> where relations aren't needed.</p>
+    <ul>
+      <li><code>smart</code> costs only ~12&nbsp;s and ~0.2&nbsp;GB more than <code>complete_ways</code>, for the same output size — but it completes multipolygon <strong>relations</strong> (admin boundaries).</li>
+      <li><code>simple</code> is ~2× faster and ~1.5&nbsp;GB leaner, but geometrically incomplete — only for throwaway cuts.</li>
+      <li>The per-project <code>extract_strategy</code> knob selects this; the pipeline uses the strongest strategy any project under a region needs.</li>
+    </ul>
+  </div>
+</section>
+  
+<section class="card">
+  <span class="qno">Q3</span>
+  <h2>Cost of keeping referenced objects (default) vs <code>-R</code> (omit)?</h2>
+  <p class="ctx"><code>osmium tags-filter</code> includes referenced nodes/members by default (complete geometry).
+  <code>-R/--omit-referenced</code> drops them.</p>
+  <table><thead><tr><th>tags-filter mode</th><th>Wall time</th><th>Peak RAM</th><th>Output</th></tr></thead><tbody><tr><th scope="row">include referenced <span class="pill">default · usable geometry</span></th><td class="num"><span class="bar" style="--w:100%"></span><span class="v">66.1 s</span></td><td class="num"><span class="bar" style="--w:100%"></span><span class="v">2.2 GB</span></td><td class="num"><span class="bar" style="--w:100%"></span><span class="v">53 MB</span></td></tr><tr><th scope="row">-R omit referenced <span class="pill">cheap · broken geometry</span></th><td class="num"><span class="bar" style="--w:35.562953995157386%"></span><span class="v">23.5 s</span></td><td class="num"><span class="bar" style="--w:11.339563096560159%"></span><span class="v">252 MB</span></td><td class="num"><span class="bar" style="--w:29.679135277352188%"></span><span class="v">16 MB</span></td></tr></tbody></table>
+  <div class="interp">
+    <p class="verdict">Verdict: keep the <strong>default (include)</strong> — the cheap mode produces unusable extracts.</p>
+    <ul>
+      <li><code>-R</code> is ~3× faster and ~9× less RAM — but the smaller output (16 vs 53&nbsp;MB) is smaller <em>because</em> ways/relations lost their nodes/members.</li>
+      <li>This is why the orchestrator was fixed to include-by-default and only add <code>-R</code> when a project opts out.</li>
+    </ul>
+  </div>
+</section>
+  
+<section class="card">
+  <span class="qno">Q4</span>
+  <h2>Region-first or tag-first (for our sparse tags)?</h2>
+  <p class="ctx">Same end result, two orders. Sparse tags = boundaries + a few POIs.</p>
+  <div class="two">
+    <div>
+      <h3>A · region → tag</h3>
+      <table><thead><tr><th>step</th><th>Wall</th><th>Peak RAM</th><th>Output</th></tr></thead>
+      <tbody><tr><th scope="row">extract region (smart)</th><td class="num"><span class="bar" style="--w:97.10666666666667%"></span><span class="v">72.8 s</span></td><td class="num"><span class="bar" style="--w:100%"></span><span class="v">3.8 GB</span></td><td class="num"><span class="bar" style="--w:100%"></span><span class="v">622 MB</span></td></tr><tr><th scope="row">tag-filter region</th><td class="num"><span class="bar" style="--w:12.76%"></span><span class="v">9.6 s</span></td><td class="num"><span class="bar" style="--w:55.616%"></span><span class="v">2.1 GB</span></td><td class="num"><span class="bar" style="--w:14.214323361714682%"></span><span class="v">9 MB</span></td></tr><tr class="total"><th scope="row">total</th><td class="num accent"><span class="bar" style="--w:100%"></span><span class="v">82.4 s</span></td><td class="num">—</td><td class="num"><span class="bar" style="--w:14.214323361714682%"></span><span class="v">9 MB</span></td></tr></tbody></table>
+    </div>
+    <div>
+      <h3>B · tag → region</h3>
+      <table><thead><tr><th>step</th><th>Wall</th><th>Peak RAM</th><th>Output</th></tr></thead>
+      <tbody><tr><th scope="row">tag-filter country</th><td class="num"><span class="bar" style="--w:95.54666666666665%"></span><span class="v">71.7 s</span></td><td class="num"><span class="bar" style="--w:57.4399%"></span><span class="v">2.2 GB</span></td><td class="num"><span class="bar" style="--w:88.33246390024821%"></span><span class="v">53 MB</span></td></tr><tr><th scope="row">extract region (smart)</th><td class="num"><span class="bar" style="--w:4.08%"></span><span class="v">3.1 s</span></td><td class="num"><span class="bar" style="--w:97.0491%"></span><span class="v">3.7 GB</span></td><td class="num"><span class="bar" style="--w:13.684447606404623%"></span><span class="v">8 MB</span></td></tr><tr class="total"><th scope="row">total</th><td class="num accent"><span class="bar" style="--w:99.62666666666667%"></span><span class="v">74.7 s</span></td><td class="num">—</td><td class="num"><span class="bar" style="--w:13.684447606404623%"></span><span class="v">8 MB</span></td></tr></tbody></table>
+    </div>
+  </div>
+  <div class="interp">
+    <p class="verdict">Verdict: tag-first is marginally faster here — but both are dominated by one unavoidable full pass. Re-test on the planet before changing the pipeline.</p>
+    <ul>
+      <li>Tag-filtering the country first shrinks it (→ ~53&nbsp;MB), making the region cut almost free (3&nbsp;s vs 10&nbsp;s).</li>
+      <li>The saving is small because tag-filter-with-referenced is itself a multi-pass op; on 87&nbsp;GB the win isn't guaranteed.</li>
+      <li>The pipeline currently does region-first (osmium's own recommendation for splitting big files).</li>
+    </ul>
+  </div>
+</section>
+
+  <details><summary>Appendix — all raw measurements</summary>
+    <table><thead><tr><th>Scenario</th><th>Step</th><th>Wall</th><th>Peak RAM</th><th>Output</th><th>OK</th></tr></thead><tbody><tr><td>01-strategy-simple</td><td>extract_simple</td><td class="r">25.6 s</td><td class="r">2.2 GB</td><td class="r">616 MB</td><td class="c">✅</td></tr><tr><td>01-strategy-simple</td><td>_container_peak</td><td class="r">—</td><td class="r">2.8 GB</td><td class="r">—</td><td class="c">✅</td></tr><tr><td>02-strategy-complete_ways</td><td>extract_complete_ways</td><td class="r">51.3 s</td><td class="r">3.6 GB</td><td class="r">621 MB</td><td class="c">✅</td></tr><tr><td>02-strategy-complete_ways</td><td>_container_peak</td><td class="r">—</td><td class="r">4.3 GB</td><td class="r">—</td><td class="c">✅</td></tr><tr><td>03-strategy-smart</td><td>extract_smart</td><td class="r">62.9 s</td><td class="r">3.8 GB</td><td class="r">622 MB</td><td class="c">✅</td></tr><tr><td>03-strategy-smart</td><td>_container_peak</td><td class="r">—</td><td class="r">4.4 GB</td><td class="r">—</td><td class="c">✅</td></tr><tr><td>04-tagfilter-include-ref</td><td>tagfilter_include</td><td class="r">66.1 s</td><td class="r">2.2 GB</td><td class="r">53 MB</td><td class="c">✅</td></tr><tr><td>04-tagfilter-include-ref</td><td>_container_peak</td><td class="r">—</td><td class="r">2.2 GB</td><td class="r">—</td><td class="c">✅</td></tr><tr><td>05-tagfilter-omit-ref</td><td>tagfilter_omit</td><td class="r">23.5 s</td><td class="r">252 MB</td><td class="r">16 MB</td><td class="c">✅</td></tr><tr><td>05-tagfilter-omit-ref</td><td>_container_peak</td><td class="r">—</td><td class="r">266 MB</td><td class="r">—</td><td class="c">✅</td></tr><tr><td>06-region-then-tag</td><td>region_extract</td><td class="r">72.8 s</td><td class="r">3.8 GB</td><td class="r">622 MB</td><td class="c">✅</td></tr><tr><td>06-region-then-tag</td><td>region_tagfilter</td><td class="r">9.6 s</td><td class="r">2.1 GB</td><td class="r">9 MB</td><td class="c">✅</td></tr><tr><td>06-region-then-tag</td><td>_container_peak</td><td class="r">—</td><td class="r">4.4 GB</td><td class="r">—</td><td class="c">✅</td></tr><tr><td>07-tag-then-region</td><td>global_tagfilter</td><td class="r">71.7 s</td><td class="r">2.2 GB</td><td class="r">53 MB</td><td class="c">✅</td></tr><tr><td>07-tag-then-region</td><td>region_extract</td><td class="r">3.1 s</td><td class="r">3.7 GB</td><td class="r">8 MB</td><td class="c">✅</td></tr><tr><td>07-tag-then-region</td><td>_container_peak</td><td class="r">—</td><td class="r">3.7 GB</td><td class="r">—</td><td class="c">✅</td></tr></tbody></table>
+  </details>
+
+  <footer>Regenerate with <code>bun report.ts</code> after <code>./run.sh</code>. Add a scenario in <code>scenarios/</code>, run just that one, regenerate — existing results are reused.</footer>
+</div></body></html>
