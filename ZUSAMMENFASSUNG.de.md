@@ -33,9 +33,9 @@ Ausführung über **GitHub Actions auf einem self-hosted Runner**. Ziel ist
 - Läuft auf dem bestehenden **FOSSGIS-uMap-Server bei Hetzner** (geteilt mit
   uMap), **~585 GB Platte**. 87-GB-Planet + Zwischen-/Endausschnitte passen
   komfortabel; eng wird es nur kurz beim Neu-Download (~2× Planet).
-- Einmalig nötig (manuell): Pakete installieren (`osmium-tool`, `pyosmium`,
-  `bun`, `nginx`) und den **GitHub-Actions-Runner registrieren**. Danach läuft
-  alles über die Workflows.
+- Einmalige Provisionierung per **Ansible-Rolle** (`server/ansible/`, soll in das
+  FOSSGIS-Setup eingebunden werden): Pakete, Nutzer, Verzeichnisse, nginx. Nur die
+  **Runner-Registrierung** bleibt manuell. Danach läuft alles über die Workflows.
 - **Wichtig (Sicherheit):** Repo ist öffentlich + Server geteilt mit uMap. Der
   Runner muss abgesichert werden (keine Fremd-PRs ausführen, eigener
   unprivilegierter Nutzer, kein freies `sudo`) — siehe PLAN.md §A3.

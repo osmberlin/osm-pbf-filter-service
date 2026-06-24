@@ -1,0 +1,12 @@
+---
+# Example play. The FOSSGIS admins should fold the `osm_extract_service` role
+# into their existing playbook/inventory rather than run this standalone.
+- name: Provision the osm-pbf-filter-service host
+  hosts: osm_extract
+  become: true
+  roles:
+    - role: osm_extract_service
+      vars:
+        osm_download_hostname: osm.example.org   # set the real download host
+        # osm_bun_version: "1.3.13"
+        # osm_runner_user: osmrunner

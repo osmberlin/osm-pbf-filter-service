@@ -113,9 +113,9 @@ Two halves, covered separately below:
 
 # Part A — Server provisioning
 
-The whole point: do this **once**, by hand, then never touch the server again for
-normal operation. Capture every step as a script in `server/` so re-provisioning
-is reproducible.
+The whole point: do this **once**, then never touch the server again for normal
+operation. Provisioning is an **Ansible role** ([`server/ansible/`](server/ansible/README.md))
+so it's reproducible and fits the FOSSGIS fleet (see A2).
 
 ## A1. The server (FOSSGIS uMap instance) & disk budget
 
@@ -143,27 +143,27 @@ on free disk** (§A6).
 - **Coexistence:** keep everything under `/srv/osm/`, clean up `work/` after each
   run, and cap transient usage so we never starve uMap of disk or I/O.
 
-## A2. Software to install (one-time)
+## A2. Provisioning — Ansible role
 
-| Package | Purpose |
+Provisioning lives in the **`osm_extract_service` Ansible role**
+([`server/ansible/`](server/ansible/README.md)). The FOSSGIS server fleet is
+managed centrally (infra docs/playbooks in the FOSSGIS GitLab), so the role is
+meant to be **folded into the FOSSGIS setup**, matching their inventory/var
+conventions — to be agreed with the admins (§7).
+
+The role ([tasks](server/ansible/roles/osm_extract_service/tasks/main.yml)):
+
+| Step | Purpose |
 |---|---|
-| `osmium-tool` | extract + tags-filter |
-| `pyosmium` (`pyosmium-up-to-date`) | apply daily replication diffs to the planet |
-| `bun` | run the orchestrator |
-| `git` | checkout repo (the runner does this) |
-| `nginx` | serve extracts |
-| GitHub Actions runner | execute workflows on this machine |
+| apt packages: `osmium-tool`, `nginx`, `git`, `jq`, `python3*` | extract/serve/diff toolchain |
+| pyosmium venv + `pyosmium-up-to-date` on PATH | apply daily replication diffs |
+| unprivileged `osmrunner` user | the runner + pipeline run as non-root |
+| `/srv/osm/{planet,work,extracts}` | data + work + web root (A4) |
+| pinned `bun` | run the orchestrator |
+| nginx site ([template](server/ansible/roles/osm_extract_service/templates/nginx-osm-extracts.conf.j2)) | serve extracts; reload only after `nginx -t` |
 
-[`server/bootstrap.sh`](server/bootstrap.sh) installs all of the above and creates
-the directory layout in A4.
-
-> **Provision with Ansible, following FOSSGIS conventions** (feedback). The FOSSGIS
-> server fleet is managed centrally and their infra docs/playbooks live in the
-> FOSSGIS GitLab — so the production path should be an **Ansible role** that the
-> admins can fold into their existing setup, not a one-off shell script run by hand.
-> `bootstrap.sh` stays as a readable, reviewable reference of exactly what the role
-> must do (packages, dirs, user, nginx site, runner registration); porting it to
-> `server/ansible/` is an open TODO (§7), to be aligned with the FOSSGIS admins.
+The GitHub Actions **runner registration** is interactive (a one-time token) and
+stays **manual** — documented in the [role README](server/ansible/README.md).
 
 ## A3. Self-hosted GitHub Actions runner ⚠️ security (mandatory)
 
@@ -210,8 +210,9 @@ can open a pull request that would otherwise run code on the box.
 
 Install flow (summary): download + unpack the runner package from the releases
 link → `./config.sh --url https://github.com/<org>/<repo> --token <token> --labels osm`
-→ `sudo ./svc.sh install osmrunner && sudo ./svc.sh start`. (See `server/bootstrap.sh`
-for the deps; runner registration is interactive and stays manual by design.)
+→ `sudo ./svc.sh install osmrunner && sudo ./svc.sh start`. (The deps are installed
+by the Ansible role (A2); runner registration is interactive and stays manual by
+design — see the [role README](server/ansible/README.md).)
 
 > Because the box also hosts uMap, this setup must be coordinated with **Lars
 > Lingner / the FOSSGIS OSM-server admins** before registering the runner.
@@ -249,9 +250,9 @@ orchestrator reads configs from there and writes outputs into `/srv/osm/`.
 
 ## A5. nginx
 
-Serve `/srv/osm/extracts` as static files (config:
-[`server/nginx-osm-extracts.conf`](server/nginx-osm-extracts.conf)) with autoindex
-off and:
+Serve `/srv/osm/extracts` as static files (config: the role's
+[nginx template](server/ansible/roles/osm_extract_service/templates/nginx-osm-extracts.conf.j2))
+with autoindex off and:
 
 - `Last-Modified` (from file mtime = when the extract was produced) — enables
   conditional GETs / caching.
@@ -710,10 +711,11 @@ end-to-end**.
 - Tests (vitest): [test/geojson.test.ts](test/geojson.test.ts) · [test/tags.test.ts](test/tags.test.ts) · [test/plan.test.ts](test/plan.test.ts)
 - [package.json](package.json) — `build` + `test` scripts (vitest is the only devDep)
 
-**Server provisioning** (Part A)
-- [server/bootstrap.sh](server/bootstrap.sh) — one-time install + data dirs + nginx site (reference; to be ported to Ansible)
-- [server/nginx-osm-extracts.conf](server/nginx-osm-extracts.conf) — static download host
-- `server/ansible/` — Ansible role aligned with FOSSGIS conventions (planned, §7)
+**Server provisioning** (Part A) — Ansible role [server/ansible/](server/ansible/README.md)
+- [roles/osm_extract_service/tasks/main.yml](server/ansible/roles/osm_extract_service/tasks/main.yml) — packages, user, dirs, bun, nginx
+- [.../defaults/main.yml](server/ansible/roles/osm_extract_service/defaults/main.yml) — variables (host, paths, bun version)
+- [.../templates/nginx-osm-extracts.conf.j2](server/ansible/roles/osm_extract_service/templates/nginx-osm-extracts.conf.j2) — static download host
+- [playbook.example.yml](server/ansible/playbook.example.yml) · [inventory.example.ini](server/ansible/inventory.example.ini)
 
 **CI/CD** (Part C)
 - [.github/workflows/ci.yml](.github/workflows/ci.yml) — vitest on **GitHub-hosted** runners (never self-hosted)
@@ -745,8 +747,8 @@ end-to-end**.
 (Server, planet size, and repo visibility are settled — see §3. Remaining
 design/ops questions:)
 
-1. **Provision via Ansible (FOSSGIS conventions)** — port `bootstrap.sh` to an
-   Ansible role under `server/ansible/` that fits the FOSSGIS GitLab setup (§A2).
+1. **Fold the Ansible role into FOSSGIS** — the [`osm_extract_service` role](server/ansible/README.md)
+   exists; agree its placement / var conventions with the FOSSGIS GitLab setup (§A2).
 2. **Coexistence with uMap** — confirm disk **and RAM** headroom and that our
    daily CPU/disk-I/O won't impact uMap (§A1/§B8); agree the runner setup with the
    FOSSGIS admins (§A3).

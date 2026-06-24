@@ -1,15 +1,16 @@
+# {{ ansible_managed }}
 # nginx site for serving OSM extracts (PLAN.md §A5).
 #
-# Ships working over HTTP so `nginx -t` passes on a fresh box (before any cert
-# exists). Add TLS with certbot — `certbot --nginx -d osm.example.org` injects the
+# Ships working over HTTP so `nginx -t` passes before any cert exists. Add TLS
+# with certbot (`certbot --nginx -d {{ osm_download_hostname }}`), which injects the
 # ssl_certificate lines and an HTTP->HTTPS redirect into the server block below.
 
 server {
     listen 80;
     listen [::]:80;
-    server_name osm.example.org;   # TODO: set the real download hostname
+    server_name {{ osm_download_hostname }};
 
-    root /srv/osm/extracts;
+    root {{ osm_root }}/extracts;
     autoindex off;
 
     # Serve .json inline; everything else (incl. .pbf) as a binary download.
@@ -31,12 +32,12 @@ server {
 # server {
 #     listen 443 ssl http2;
 #     listen [::]:443 ssl http2;
-#     server_name osm.example.org;
+#     server_name {{ osm_download_hostname }};
 #
-#     ssl_certificate     /etc/letsencrypt/live/osm.example.org/fullchain.pem;
-#     ssl_certificate_key /etc/letsencrypt/live/osm.example.org/privkey.pem;
+#     ssl_certificate     /etc/letsencrypt/live/{{ osm_download_hostname }}/fullchain.pem;
+#     ssl_certificate_key /etc/letsencrypt/live/{{ osm_download_hostname }}/privkey.pem;
 #
-#     root /srv/osm/extracts;
+#     root {{ osm_root }}/extracts;
 #     autoindex off;
 #     types { application/json json; }
 #     default_type application/octet-stream;
