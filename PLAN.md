@@ -157,6 +157,14 @@ on free disk** (§A6).
 [`server/bootstrap.sh`](server/bootstrap.sh) installs all of the above and creates
 the directory layout in A4.
 
+> **Provision with Ansible, following FOSSGIS conventions** (feedback). The FOSSGIS
+> server fleet is managed centrally and their infra docs/playbooks live in the
+> FOSSGIS GitLab — so the production path should be an **Ansible role** that the
+> admins can fold into their existing setup, not a one-off shell script run by hand.
+> `bootstrap.sh` stays as a readable, reviewable reference of exactly what the role
+> must do (packages, dirs, user, nginx site, runner registration); porting it to
+> `server/ansible/` is an open TODO (§7), to be aligned with the FOSSGIS admins.
+
 ## A3. Self-hosted GitHub Actions runner ⚠️ security (mandatory)
 
 The repo is **public** and the runner sits on a **shared FOSSGIS server that also
@@ -207,6 +215,19 @@ for the deps; runner registration is interactive and stays manual by design.)
 
 > Because the box also hosts uMap, this setup must be coordinated with **Lars
 > Lingner / the FOSSGIS OSM-server admins** before registering the runner.
+
+**Status of these controls (what's enforced where):**
+- ✅ Code-enforced now: untrusted code never hits the self-hosted runner
+  ([daily.yml](.github/workflows/daily.yml)/[seed-planet.yml](.github/workflows/seed-planet.yml)
+  trigger only on `schedule`/`workflow_dispatch`; tests run on GitHub-hosted runners
+  in [ci.yml](.github/workflows/ci.yml)); least-privilege token + no persisted
+  credentials on the shared box; one-shot push token.
+- ⚙️ Manual one-time (provisioning/repo settings): dedicated unprivileged user, no
+  sudo, firewall, and the repo toggle **Settings → Actions → Require approval for
+  outside collaborators**.
+- 🔜 Open hardening TODOs (§7): prefer an **ephemeral** runner (fresh workspace per
+  job) and a dedicated **runner group** so only these workflows can use the `osm`
+  label.
 
 ## A4. Directory layout on the server
 
@@ -263,6 +284,40 @@ server {
 - **Runner health** — systemd restarts it; GitHub shows it offline if down.
 - **No app deploys** — logic changes ship by merging to `main`; the runner picks
   up the new workflow/scripts on the next run.
+
+## A7. Access model & residual root tasks (feedback)
+
+The target is exactly what was asked: **Lars provisions once (root), then almost
+everything runs through the runner as a non-root user.** Concretely:
+
+- **Root access:** Lars **plus a second admin as fallback** (bus factor). Both via
+  the FOSSGIS admin setup; no shared passwords.
+- **The runner runs as an unprivileged user** (`osmrunner`) with **no sudo**
+  (§A3). Day-to-day pipeline changes ship by merging to `main` — no server login.
+- **What still needs root occasionally** (not coverable by the runner):
+  OS/security updates, the GitHub runner agent's own updates, TLS issuance/renewal
+  (certbot automates renewal), nginx/Ansible changes, and incident debugging.
+  These are rare and shared between the two admins.
+
+So: **yes, one-time install + runner is enough for normal operation**, but plan
+for a couple of root touchpoints a year and a documented second admin.
+
+## A8. Observing server load (feedback)
+
+Two layers, because the box is shared with uMap:
+
+1. **Reuse FOSSGIS's existing host monitoring** — confirm what they run (Munin /
+   Prometheus+Grafana / Netdata) and watch CPU, **RAM**, disk space, and **disk
+   I/O** there. We should hook into it, not run a parallel stack. (Open TODO §7.)
+2. **Per-run metrics from the pipeline itself** — we already record update/extract
+   timings (§B5). Extend the runner steps to also capture **peak RAM (max RSS)**
+   and **wall time** per osmium step (`/usr/bin/time -v`) and free-disk before/after,
+   and print them to the Actions log + `$GITHUB_STEP_SUMMARY`. That gives a public,
+   per-day record of resource cost without server access.
+
+**Protecting uMap during the run:** run osmium under `nice`/`ionice` so it yields
+CPU and disk I/O to uMap, and **schedule off-peak** (see §B8). Alert (via the
+FOSSGIS monitoring) if a run pushes memory or disk past a threshold.
 
 ---
 
@@ -388,26 +443,32 @@ parent file is read only once:
 osmium extract --config continents.json --strategy complete_ways \
   /srv/osm/planet/planet.osm.pbf
 
-# Tag-filter each continent to its union (keep referenced objects for geometry):
-osmium tags-filter --add-referenced \
+# Tag-filter each continent to its union. osmium INCLUDES referenced objects by
+# default (so ways/relations keep their geometry); -R/--omit-referenced disables that.
+osmium tags-filter \
   work/europe.osm.pbf nwr/boundary=administrative nwr/admin_level nwr/amenity=playground \
   -o work/europe.filtered.osm.pbf
 
 # One read of europe.filtered -> all projects under Europe:
-osmium extract --config europe-projects.json --strategy complete_ways \
+osmium extract --config europe-projects.json --strategy smart \
   work/europe.filtered.osm.pbf
 
 # Final per-project tag-filter to its exact tags:
-osmium tags-filter --add-referenced \
+osmium tags-filter \
   work/germany.osm.pbf nwr/boundary=administrative nwr/admin_level \
   -o /srv/osm/extracts/osm-boundary-check/latest.osm.pbf
 ```
 
 Notes:
-- `--strategy complete_ways` (or `smart`) keeps ways/relations geometrically
-  complete across cut boundaries.
-- `--add-referenced` keeps nodes/members referenced by kept objects so the result
-  builds valid geometry (at some size cost — a documented trade-off).
+- `--strategy` cuts geometry: osmium's default is `complete_ways` (2 passes);
+  `smart` (3 passes, a bit more RAM) also completes multipolygon **relations**, so
+  it's the safer default for boundary projects. We pick the strongest strategy any
+  project under a region needs (see §B8).
+- osmium tags-filter **includes referenced objects by default** (up to 3 passes,
+  keeps ID tables in RAM) so results build valid geometry; `-R/--omit-referenced`
+  is the cheaper 1-pass mode that drops them. The per-project `add_referenced`
+  knob (default `true`) maps to the default include; `false` adds `-R`. ⚠️ There is
+  no `--add-referenced` flag.
 - The multi-extract `--config` JSON is **generated** by the orchestrator from the
   active nodes; polygons are referenced as **GeoJSON** files.
 
@@ -503,6 +564,49 @@ https://<host>/extracts/index.json                            # everything
 The data file is always `latest.osm.pbf` (overwritten in place each run), so the
 URL is stable across runs — consumers hard-code it and check `status.json` /
 `Last-Modified` for freshness.
+
+## B8. Performance, RAM & coexistence with uMap (feedback)
+
+**Region filter vs. tag filter — which is smarter?** They are different osmium
+tools and not either/or; **we use both, in a deliberate order**:
+
+- **Region (geometry) filtering first, hierarchically.** This is exactly osmium's
+  own recommendation for splitting a big file: *"first create several larger
+  extracts and then split them again and again into smaller pieces"*
+  ([osmium-extract docs](https://docs.osmcode.org/osmium/latest/osmium-extract.html)).
+  We read the 87 GB planet **once** to cut all active continents, then cut
+  countries from continents, etc. (§B3/§B4).
+- **Tag filtering reduces each region to the tags projects asked for.** Because
+  osmium can't geo-cut and tag-filter in one command, these are separate passes.
+- **Open optimisation:** for very *sparse* tag sets (e.g. only boundaries +
+  playgrounds) a **global tag-filter pass before the region cuts** can shrink the
+  87 GB planet a lot up front. It's not always a win (boundary relations pull in
+  many referenced members), so it's a **benchmark TODO** (§7), not a default.
+
+**Will the RAM be enough?** Very likely yes — osmium **streams** the file; it does
+*not* load 87 GB into memory. RAM is driven by **ID bitmaps**, roughly
+`#extracts × (highest_node_id / 8)` for the `simple` strategy, **~2×** for
+`complete_ways`, and a bit more for `smart`
+([docs](https://docs.osmcode.org/osmium/latest/osmium-extract.html)); tags-filter
+keeps "tables of object IDs it needs" (and with `-R/--omit-referenced` keeps
+*none*). That's on the order of a few GB, not tens — but the server's RAM is still
+**unconfirmed (§3)**, so this must be measured (§A8) before trusting it.
+
+**Strategy choice (memory vs. completeness):** osmium's default is `complete_ways`
+(2 passes); `smart` (3 passes, a bit more RAM) also completes **relations**, which
+boundary projects need — so we default to the strongest strategy any project under
+a region requests (now honored per project). Projects that don't need relations can
+set `complete_ways` to use less RAM.
+
+**Will it disturb uMap?** The real contention is **disk I/O** (reading 87 GB +
+writing intermediates) and secondarily RAM, on a shared box. Mitigations:
+
+- Run osmium under **`nice` + `ionice`** so it yields CPU and I/O to uMap.
+- **Schedule off-peak** (the daily cron time is a TODO §7; pick a quiet window
+  *after* the OSMF diffs are available).
+- **Cap concurrency** and clean `work/` immediately (§A1), and **watch RAM/I/O**
+  in the FOSSGIS monitoring (§A8) with an alert threshold.
+- Confirm headroom over uMap's own steady-state usage **before** going live.
 
 ---
 
@@ -607,8 +711,9 @@ end-to-end**.
 - [package.json](package.json) — `build` + `test` scripts (vitest is the only devDep)
 
 **Server provisioning** (Part A)
-- [server/bootstrap.sh](server/bootstrap.sh) — one-time install + data dirs + nginx site
+- [server/bootstrap.sh](server/bootstrap.sh) — one-time install + data dirs + nginx site (reference; to be ported to Ansible)
 - [server/nginx-osm-extracts.conf](server/nginx-osm-extracts.conf) — static download host
+- `server/ansible/` — Ansible role aligned with FOSSGIS conventions (planned, §7)
 
 **CI/CD** (Part C)
 - [.github/workflows/ci.yml](.github/workflows/ci.yml) — vitest on **GitHub-hosted** runners (never self-hosted)
@@ -640,18 +745,31 @@ end-to-end**.
 (Server, planet size, and repo visibility are settled — see §3. Remaining
 design/ops questions:)
 
-1. **Coexistence with uMap** — confirm disk headroom and that our daily I/O won't
-   impact the uMap service on the shared box (§A1), and agree the runner setup
-   with the FOSSGIS admins (§A3).
-2. **Download host + TLS** — reuse a subdomain of the uMap instance, or a new
+1. **Provision via Ansible (FOSSGIS conventions)** — port `bootstrap.sh` to an
+   Ansible role under `server/ansible/` that fits the FOSSGIS GitLab setup (§A2).
+2. **Coexistence with uMap** — confirm disk **and RAM** headroom and that our
+   daily CPU/disk-I/O won't impact uMap (§A1/§B8); agree the runner setup with the
+   FOSSGIS admins (§A3).
+3. **Server RAM / disk type** — get the real CPU/RAM/SSD figures (§3) so we can
+   trust the osmium memory estimate in §B8.
+4. **Load monitoring** — confirm which monitoring stack FOSSGIS runs and hook into
+   it; add per-run RAM/time/disk metrics to the pipeline (§A8).
+5. **Filtering-strategy benchmark** — on the real server, measure region-first vs.
+   an upfront global tag-filter, and `smart` vs. `complete_ways`: peak RAM, wall
+   time, I/O, and confirm uMap is unaffected (§B8).
+6. **Off-peak schedule + nice/ionice** — pick the daily cron window and I/O
+   priority so the run stays out of uMap's way (§A8/§B8).
+7. **Runner hardening** — adopt an ephemeral runner + dedicated runner group (§A3).
+8. **Second root admin** — name the fallback admin alongside Lars (§A7).
+9. **Download host + TLS** — reuse a subdomain of the uMap instance, or a new
    host? Who manages the cert?
-3. **Country layer depth** — always include a country layer, or only add one when
-   ≥N projects share a country (to avoid pointless intermediate extracts)?
-4. **Custom polygons** — do projects need arbitrary polygons (cities, custom
-   boundaries), or always a named region? Affects the overlap-detection work.
-5. **Commit polygons to git?** Recommended (small, reproducible) — confirm.
-6. **HTTP data-age headers** — is `Last-Modified` + `status.json` enough, or do
-   we need the custom `X-OSM-*` headers (which add a small nginx-reload step)?
-7. **Schedule timing** — what time are OSMF daily diffs reliably available, so we
-   schedule `daily.yml` after them?
+10. **Country layer depth** — always include a country layer, or only add one when
+    ≥N projects share a country (to avoid pointless intermediate extracts)?
+11. **Custom polygons** — do projects need arbitrary polygons (cities, custom
+    boundaries), or always a named region? (Currently validated but skipped — §B3.)
+12. **Commit polygons to git?** Recommended (small, reproducible) — confirm.
+13. **HTTP data-age headers** — is `Last-Modified` + `status.json` enough, or do
+    we need the custom `X-OSM-*` headers (which add a small nginx-reload step)?
+14. **Schedule timing** — what time are OSMF daily diffs reliably available, so we
+    schedule `daily.yml` after them?
 ```

@@ -47,7 +47,9 @@ function runStep(step: PlanStep): number {
   } else if (step.kind === "tags-filter") {
     mkdirSync(path.dirname(step.output), { recursive: true });
     const args = ["tags-filter", "--overwrite"];
-    if (step.addReferenced) args.push("-R");
+    // osmium INCLUDES referenced objects by default (complete geometry). -R is
+    // --omit-referenced, so only pass it when we explicitly do NOT want them.
+    if (!step.addReferenced) args.push("-R");
     args.push("-o", step.output, step.input, ...step.filters);
     osmium(args);
   } else if (step.kind === "copy") {
