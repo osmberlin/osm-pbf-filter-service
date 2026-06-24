@@ -1,0 +1,2 @@
+{"scenario":"04-tagfilter-include-ref","step":"tagfilter_include","status":"ok","wall_s":66.08,"max_rss_kb":2276384,"out_bytes":55573981}
+{"scenario":"04-tagfilter-include-ref","step":"_container_peak","status":"ok","wall_s":0,"max_rss_kb":2331112,"out_bytes":0}

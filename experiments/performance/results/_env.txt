@@ -1,0 +1,2 @@
+osmium version 1.15.0
+time (GNU Time) UNKNOWN

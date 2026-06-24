@@ -1,0 +1,4 @@
+# Inputs + heavy/transient outputs stay local; results/*.jsonl + REPORT.md are committed.
+data/
+work/
+*.pbf

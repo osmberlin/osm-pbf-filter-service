@@ -609,6 +609,17 @@ writing intermediates) and secondarily RAM, on a shared box. Mitigations:
   in the FOSSGIS monitoring (§A8) with an alert threshold.
 - Confirm headroom over uMap's own steady-state usage **before** going live.
 
+**Measured (first benchmark).** A Dockerized run on the 4.4 GB Germany extract
+([experiments/performance/](experiments/performance/REPORT.md)) found: osmium
+`extract` peaks at **~4 GB RAM** (driven by the global node-ID index, not output
+size); `smart` costs only ~12 s / ~0.2 GB more than `complete_ways` and completes
+relations (so it's the right boundary default); `tags-filter` **with** referenced
+objects ≈ 2.2 GB vs **`-R`** ≈ 0.25 GB (but `-R` drops geometry); and for our
+sparse tags, tag-then-region was marginally faster than region-then-tag. Takeaway:
+**budget ≥ 8 GB headroom**, the run is **disk-I/O bound** (a few full passes), and
+the results must be **re-measured on the planet** (the country file under-counts
+data volume even though it exercises realistic RAM).
+
 ---
 
 # Part C — CI/CD workflows (GitHub Actions)
@@ -756,9 +767,10 @@ design/ops questions:)
    trust the osmium memory estimate in §B8.
 4. **Load monitoring** — confirm which monitoring stack FOSSGIS runs and hook into
    it; add per-run RAM/time/disk metrics to the pipeline (§A8).
-5. **Filtering-strategy benchmark** — on the real server, measure region-first vs.
-   an upfront global tag-filter, and `smart` vs. `complete_ways`: peak RAM, wall
-   time, I/O, and confirm uMap is unaffected (§B8).
+5. **Filtering-strategy benchmark** — first pass **done** on a country file
+   ([experiments/performance/](experiments/performance/REPORT.md), §B8); still TODO:
+   re-run **on the planet** and **on the real server** to confirm RAM and that uMap
+   is unaffected.
 6. **Off-peak schedule + nice/ionice** — pick the daily cron window and I/O
    priority so the run stays out of uMap's way (§A8/§B8).
 7. **Runner hardening** — adopt an ephemeral runner + dedicated runner group (§A3).

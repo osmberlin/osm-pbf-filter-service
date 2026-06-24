@@ -1,0 +1,2 @@
+{"scenario":"03-strategy-smart","step":"extract_smart","status":"ok","wall_s":62.88,"max_rss_kb":4000836,"out_bytes":651769527}
+{"scenario":"03-strategy-smart","step":"_container_peak","status":"ok","wall_s":0,"max_rss_kb":4641440,"out_bytes":0}

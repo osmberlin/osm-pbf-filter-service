@@ -1,0 +1,2 @@
+{"scenario":"01-strategy-simple","step":"extract_simple","status":"ok","wall_s":25.60,"max_rss_kb":2318304,"out_bytes":645889775}
+{"scenario":"01-strategy-simple","step":"_container_peak","status":"ok","wall_s":0,"max_rss_kb":2949580,"out_bytes":0}

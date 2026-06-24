@@ -1,0 +1,3 @@
+{"scenario":"07-tag-then-region","step":"global_tagfilter","status":"ok","wall_s":71.66,"max_rss_kb":2297596,"out_bytes":55573981}
+{"scenario":"07-tag-then-region","step":"region_extract","status":"ok","wall_s":3.06,"max_rss_kb":3881964,"out_bytes":8609510}
+{"scenario":"07-tag-then-region","step":"_container_peak","status":"ok","wall_s":0,"max_rss_kb":3895200,"out_bytes":0}
