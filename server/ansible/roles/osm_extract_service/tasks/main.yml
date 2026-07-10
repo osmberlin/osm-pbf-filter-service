@@ -52,6 +52,15 @@
   become: true
   become_user: "{{ osm_runner_user }}"
 
+# The GitHub Actions runner is a systemd service (non-login shell): it never
+# sources .bashrc, so the installer's PATH edit doesn't reach workflow steps.
+# Link bun onto the system PATH — same pattern as pyosmium-up-to-date above.
+- name: Link bun onto PATH
+  ansible.builtin.file:
+    src: "{{ osm_runner_home }}/.bun/bin/bun"
+    dest: /usr/local/bin/bun
+    state: link
+
 - name: Install the nginx site for the extracts
   ansible.builtin.template:
     src: nginx-osm-extracts.conf.j2
