@@ -26,10 +26,10 @@ const env = existsSync(path.join(RESULTS, "_env.txt"))
 
 // --- formatting --------------------------------------------------------------
 const wall = (s?: number) => (s == null ? "—" : `${s.toFixed(1)} s`);
-const rss = (kb?: number) =>
-  kb == null ? "—" : kb >= 1024 * 1024 ? `${(kb / 1024 / 1024).toFixed(1)} GB` : `${Math.round(kb / 1024)} MB`;
-const size = (b?: number) =>
-  b == null ? "—" : b >= 1024 ** 3 ? `${(b / 1024 ** 3).toFixed(1)} GB` : `${Math.round(b / 1024 / 1024)} MB`;
+const fmtBytes = (bytes?: number) =>
+  bytes == null ? "—" : bytes >= 1024 ** 3 ? `${(bytes / 1024 ** 3).toFixed(1)} GB` : `${Math.round(bytes / 1024 / 1024)} MB`;
+const rss = (kb?: number) => fmtBytes(kb == null ? undefined : kb * 1024);
+const size = (b?: number) => fmtBytes(b);
 
 // bar cell: value + a proportional bar (max across the column for the section)
 function num(value: string, frac: number, accent = false) {

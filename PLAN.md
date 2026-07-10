@@ -250,9 +250,11 @@ orchestrator reads configs from there and writes outputs into `/srv/osm/`.
 
 ## A5. nginx
 
-Serve `/srv/osm/extracts` as static files (config: the role's
-[nginx template](server/ansible/roles/osm_extract_service/templates/nginx-osm-extracts.conf.j2))
-with autoindex off and:
+Serve only `/srv/osm/extracts` as static files, via a `location /extracts/`
+prefix with `root {{ osm_root }}` (config: the role's
+[nginx template](server/ansible/roles/osm_extract_service/templates/nginx-osm-extracts.conf.j2)).
+A catch-all `location /` returns 404, so the rest of the volume
+(`planet/`, `work/`) is never exposed. Other properties, with autoindex off:
 
 - `Last-Modified` (from file mtime = when the extract was produced) — enables
   conditional GETs / caching.
@@ -265,13 +267,18 @@ Example server block sketch:
 server {
     listen 443 ssl;
     server_name osm.example.org;
-    root /srv/osm/extracts;
 
-    location / {
+    location /extracts/ {
+        root /srv/osm;
         add_header Accept-Ranges bytes;
         add_header Cache-Control "public, max-age=3600";
         # status.json next to each file carries the authoritative data-age info.
         try_files $uri =404;
+    }
+
+    # Never expose the rest of /srv/osm (planet/, work/).
+    location / {
+        return 404;
     }
 }
 ```
@@ -488,7 +495,7 @@ plus a line in the run summary (§C1). Optional toggle: also exit non-zero so th
 job is marked failed when any input was invalid.
 
 **Implementation status (pre-alpha).** The planning logic is implemented and
-unit-tested with vitest (`bun run test`): `src/geojson.ts` (polygon validation +
+unit-tested with Bun's built-in test runner (`bun test`): `src/geojson.ts` (polygon validation +
 bbox), `src/tags.ts` (filter parsing + the union algorithm), `src/plan.ts`
 (chain resolution, activation, per-node union, ordered osmium steps), with
 `src/config.ts` (load/validate) and `src/build.ts` (executor) on top. `bun run
@@ -720,8 +727,8 @@ end-to-end**.
 - [src/plan.ts](src/plan.ts) — pure planning: region chains, active-region selection, ordered osmium steps
 - [src/github.ts](src/github.ts) — Actions error/warning annotations + step summary
 - [src/types.ts](src/types.ts) — shared, dependency-free types
-- Tests (vitest): [test/geojson.test.ts](test/geojson.test.ts) · [test/tags.test.ts](test/tags.test.ts) · [test/plan.test.ts](test/plan.test.ts)
-- [package.json](package.json) — `build` + `test` scripts (vitest is the only devDep)
+- Tests (bun test): [test/geojson.test.ts](test/geojson.test.ts) · [test/tags.test.ts](test/tags.test.ts) · [test/plan.test.ts](test/plan.test.ts) · [test/types.test.ts](test/types.test.ts)
+- [package.json](package.json) — `build` + `test` scripts (zero dependencies — Bun's built-in test runner and native YAML support cover everything)
 
 **Server provisioning** (Part A) — Ansible role [server/ansible/](server/ansible/README.md)
 - [roles/osm_extract_service/tasks/main.yml](server/ansible/roles/osm_extract_service/tasks/main.yml) — packages, user, dirs, bun, nginx
@@ -730,7 +737,7 @@ end-to-end**.
 - [playbook.example.yml](server/ansible/playbook.example.yml) · [inventory.example.ini](server/ansible/inventory.example.ini)
 
 **CI/CD** (Part C)
-- [.github/workflows/ci.yml](.github/workflows/ci.yml) — vitest on **GitHub-hosted** runners (never self-hosted)
+- [.github/workflows/ci.yml](.github/workflows/ci.yml) — tests (bun test) on **GitHub-hosted** runners (never self-hosted)
 - [.github/workflows/daily.yml](.github/workflows/daily.yml) — update + extract + commit (self-hosted)
 - [.github/workflows/seed-planet.yml](.github/workflows/seed-planet.yml) — manual full re-download
 - Scripts: [update-planet.sh](scripts/update-planet.sh) · [seed-planet.sh](scripts/seed-planet.sh) · [commit-results.sh](scripts/commit-results.sh) · [check-disk.sh](scripts/check-disk.sh)

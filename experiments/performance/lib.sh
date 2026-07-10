@@ -32,7 +32,10 @@ measure() {
   else
     st=fail
   fi
-  read -r wall maxrss xstat <"$tf" || true
+  # When the command dies from a signal (e.g. OOM kill under --memory), GNU time
+  # prepends "Command terminated by signal N" — the stats are on the LAST line.
+  read -r wall maxrss xstat <<<"$(tail -n 1 "$tf")" || true
+  [[ "${wall:-}" =~ ^[0-9.]+$ ]] || { wall=0; maxrss=0; st=fail; }
   rm -f "$tf"
   size=0
   [ "$outfile" != "-" ] && [ -f "$outfile" ] && size="$(stat -c%s "$outfile")"
