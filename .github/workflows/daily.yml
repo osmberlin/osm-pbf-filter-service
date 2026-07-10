@@ -19,6 +19,9 @@ permissions:
 jobs:
   pipeline:
     runs-on: [self-hosted, osm]
+    # A hung osmium would otherwise hold the concurrency group forever and
+    # silently stop all future daily runs.
+    timeout-minutes: 600
     permissions:
       contents: write          # only this job commits status/ + plan.json
     steps:
@@ -38,7 +41,11 @@ jobs:
       - name: Build extracts
         run: bun run build       # orchestrator (src/build.ts); no deps — uses Bun's native YAML
 
+      - name: Clean intermediate work files
+        if: always()             # even on failure — intermediates are tens of GB on the shared disk
+        run: rm -f "${OSM_ROOT:-/srv/osm}/work"/*.osm.pbf "${OSM_ROOT:-/srv/osm}/work"/*.json "${OSM_ROOT:-/srv/osm}/work"/*.tmp
+
       - name: Commit resolved plan + status
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # used for a one-shot push, never persisted
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # read by the credential helper; never persisted or put in argv
         run: ./scripts/commit-results.sh

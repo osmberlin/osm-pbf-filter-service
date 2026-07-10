@@ -29,12 +29,37 @@ stamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 git commit -m "chore(extracts): update plan + status ($stamp) [skip ci]"
 
 # actions/checkout leaves a detached HEAD, so push HEAD explicitly to the branch.
-# In CI use an ephemeral token-in-URL (nothing persisted in .git/config on the
-# shared runner); locally fall back to whatever 'origin' is configured.
+#
+# Credential handling: the token must NOT appear in the remote URL — argv is
+# world-readable via /proc on this SHARED server. A credential helper reads it
+# from the environment instead (the single-quoted helper string carries the
+# variable reference, not its value).
 branch="${GITHUB_REF_NAME:-main}"
-if [[ -n "${GITHUB_TOKEN:-}" && -n "${GITHUB_REPOSITORY:-}" ]]; then
-  git push "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:${branch}"
-else
-  git push origin "HEAD:${branch}"
-fi
-echo "==> Committed + pushed extract metadata to ${branch}."
+push() {
+  if [[ -n "${GITHUB_TOKEN:-}" && -n "${GITHUB_REPOSITORY:-}" ]]; then
+    git -c credential.helper= \
+        -c credential.helper='!f() { echo "username=x-access-token"; echo "password=${GITHUB_TOKEN}"; }; f' \
+        push "https://github.com/${GITHUB_REPOSITORY}.git" "HEAD:${branch}"
+  else
+    git push origin "HEAD:${branch}"
+  fi
+}
+
+# The pipeline runs for hours; a commit landing on the branch meanwhile makes the
+# push non-fast-forward. Rebase our single metadata commit and retry a few times.
+# The fetch/rebase must not blow through `set -e`: a rebase conflict should abort
+# the rebase, report, and exit cleanly — not leave a mid-rebase checkout.
+for attempt in 1 2 3; do
+  if push; then
+    echo "==> Committed + pushed extract metadata to ${branch}."
+    exit 0
+  fi
+  echo "==> Push rejected (attempt $attempt); rebasing onto latest ${branch}"
+  if ! git fetch origin "$branch" || ! git rebase FETCH_HEAD; then
+    git rebase --abort 2>/dev/null || true
+    echo "::error::Rebase onto latest ${branch} failed (conflicting metadata commit?); giving up."
+    exit 1
+  fi
+done
+echo "::error::Could not push extract metadata after 3 attempts."
+exit 1

@@ -20,7 +20,16 @@ jobs:
   seed:
     if: ${{ inputs.confirm == 'reseed' }}
     runs-on: [self-hosted, osm]
+    timeout-minutes: 720       # a full 87 GB download can take hours; don't hold the lock forever
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Guard free disk (reseed briefly needs ~2x planet)
+        env:
+          MIN_FREE_GB: "180"   # old + new planet coexist during the swap (PLAN §A1)
+        run: ./scripts/check-disk.sh
+
       - name: Download + verify + atomically replace planet
         run: ./scripts/seed-planet.sh
