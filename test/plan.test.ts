@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect } from "bun:test";
 import type { Region, Project } from "../src/types";
 import { resolveChain, buildNodes, buildPlan, type Paths } from "../src/plan";
 
@@ -13,7 +13,6 @@ const regions = new Map<string, Region>([
 function project(id: string, region: string, filters: string[]): Project {
   return {
     id,
-    dir: `projects/${id}`,
     area: { region },
     filters,
     osmium: { extract_strategy: "smart", add_referenced: true },
@@ -101,6 +100,16 @@ describe("buildPlan (osmium steps)", () => {
       filters: ["nwr/amenity=playground"],
       addReferenced: true,
     });
+  });
+});
+
+describe("planSteps guards", () => {
+  it("throws loudly when an active region has no polygon (instead of emitting steps that read missing files)", () => {
+    const broken = new Map<string, Region>([
+      ["europe", { id: "europe", parent: "world" }], // no polygon
+      ["germany", { id: "germany", parent: "europe", polygon: "regions/polygons/germany.geojson" }],
+    ]);
+    expect(() => buildPlan(broken, [project("p", "germany", ["nwr/admin_level"])], paths)).toThrow(/no polygon/);
   });
 });
 

@@ -2,13 +2,14 @@
 // invalid inputs are skipped and reported as GitHub Actions annotations.
 //
 // This module does IO and uses Bun's native YAML, so it is NOT imported by the
-// vitest tests (those exercise the pure modules: geojson, tags, plan).
+// tests (those exercise the pure modules: geojson, tags, plan, types).
 import { YAML } from "bun"; // native YAML — https://bun.com/docs/runtime/yaml
 import { readdirSync, readFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import { polygonGeometryType } from "./geojson";
 import { ghError, ghWarning } from "./github";
-import type { Region, Project } from "./types";
+import { resolveChain } from "./plan";
+import { type Region, type Project, isValidId, ID_RULE } from "./types";
 
 const REGIONS_DIR = "regions";
 const REGIONS_FILE = path.join(REGIONS_DIR, "regions.yaml");
@@ -38,28 +39,33 @@ export function loadRegions(): Map<string, Region> {
       ghError(REGIONS_FILE, `region missing id/parent: ${JSON.stringify(r)}`);
       continue;
     }
-    let polygon: string | undefined;
-    if (r.polygon) {
-      polygon = path.join(REGIONS_DIR, r.polygon); // repo-relative path
-      const v = validatePolygonFile(polygon);
-      if (!v.ok) {
-        ghError(polygon, `region '${r.id}' polygon invalid: ${v.detail}`);
-        continue;
-      }
+    if (!isValidId(r.id)) {
+      ghError(REGIONS_FILE, `region id '${r.id}' is invalid (${ID_RULE}) — ids become paths and URLs`);
+      continue;
+    }
+    // Every region must have a polygon: planSteps cuts each region's geometry
+    // from its parent, so a polygon-less region would break every project under it.
+    if (!r.polygon) {
+      ghError(REGIONS_FILE, `region '${r.id}' has no polygon — required for extraction`);
+      continue;
+    }
+    const polygon = path.join(REGIONS_DIR, r.polygon); // repo-relative path
+    const v = validatePolygonFile(polygon);
+    if (!v.ok) {
+      ghError(polygon, `region '${r.id}' polygon invalid: ${v.detail}`);
+      continue;
     }
     out.set(r.id, { id: r.id, name: r.name, parent: r.parent, polygon });
   }
 
-  // Drop regions whose parent chain doesn't resolve to "world".
-  for (const [id, region] of [...out]) {
-    const seen = new Set<string>();
-    let cur: string | undefined = id;
-    while (cur && cur !== "world") {
-      if (seen.has(cur)) { ghError(REGIONS_FILE, `region cycle at '${cur}'`); out.delete(id); break; }
-      seen.add(cur);
-      const r = out.get(cur);
-      if (!r) { ghError(REGIONS_FILE, `region '${id}' has unknown ancestor '${cur}'`); out.delete(id); break; }
-      cur = r.parent;
+  // Drop regions whose parent chain doesn't resolve to "world" (same walker the
+  // planner uses, so config validation and planning can never disagree).
+  for (const id of [...out.keys()]) {
+    try {
+      resolveChain(out, id);
+    } catch (e) {
+      ghError(REGIONS_FILE, `region '${id}': ${(e as Error).message}`);
+      out.delete(id);
     }
   }
 
@@ -76,6 +82,11 @@ export function loadProjects(regions: Map<string, Region>): Project[] {
     const dir = path.join(PROJECTS_DIR, id);
     const cfgPath = path.join(dir, "config.yaml");
     if (!existsSync(cfgPath)) continue;
+
+    if (!isValidId(id)) {
+      ghError(cfgPath, `project folder '${id}' is an invalid id (${ID_RULE}) — it becomes the URL path`);
+      continue;
+    }
 
     let cfg: any;
     try {
@@ -114,11 +125,17 @@ export function loadProjects(regions: Map<string, Region>): Project[] {
       continue;
     }
 
-    const filters = Array.isArray(cfg?.filters) ? cfg.filters.map(String) : [];
+    // A missing filters list means "keep everything" (deliberate). A PRESENT but
+    // non-list value is a config mistake — treating it as keep-everything would
+    // silently ship the entire unfiltered region, so reject it instead.
+    if (cfg?.filters != null && !Array.isArray(cfg.filters)) {
+      ghError(cfgPath, `'filters' must be a YAML list (got ${typeof cfg.filters}) — a scalar would silently keep everything`);
+      continue;
+    }
+    const filters = (cfg?.filters ?? []).map(String);
 
     out.push({
       id,
-      dir,
       description: cfg?.description,
       repository: cfg?.repository,
       homepage: cfg?.homepage,

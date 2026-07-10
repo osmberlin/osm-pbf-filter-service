@@ -72,8 +72,8 @@ export function mergeFilters(exprs: string[]): string[] {
 
   const out: string[] = [];
   for (const [key, a] of byKey) {
-    const types = TYPE_ORDER.filter((t) => a.types.has(t)).join("");
-    out.push(a.keyOnly ? `${types}/${key}` : `${types}/${key}=${[...a.values].sort().join(",")}`);
+    const types = canonTypes([...a.types].join(""));
+    out.push(formatFilter({ types, key, values: a.keyOnly ? null : [...a.values] }));
   }
   return out.sort();
 }

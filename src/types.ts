@@ -1,5 +1,5 @@
-// Shared data types. Kept dependency-free so the pure logic modules (and their
-// vitest tests) never need to import Bun-specific or IO modules.
+// Shared data types + tiny pure validators. Kept dependency-free so the pure
+// logic modules (and their tests) never need to import Bun-specific or IO modules.
 
 export type Region = {
   id: string;
@@ -10,7 +10,6 @@ export type Region = {
 
 export type Project = {
   id: string; // = folder name
-  dir: string; // projects/<id>
   description?: string;
   repository?: string;
   homepage?: string;
@@ -19,3 +18,15 @@ export type Project = {
   filters: string[]; // osmium tags-filter expressions; [] = keep everything
   osmium: { extract_strategy: string; add_referenced: boolean };
 };
+
+// Region ids and project folder names become filesystem paths (work/<id>.pbf,
+// extracts/<id>/) and public URLs. Restricting them up front is the systemic
+// guard against path traversal ('../x'), nested paths ('a/b'), and broken URLs —
+// important because third parties contribute configs via PRs on a public repo.
+const ID_RE = /^[a-z0-9][a-z0-9_-]*$/;
+
+export function isValidId(id: string): boolean {
+  return ID_RE.test(id);
+}
+
+export const ID_RULE = "lowercase letters, digits, '-' or '_', starting with a letter or digit";

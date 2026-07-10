@@ -1,5 +1,5 @@
 // Pure GeoJSON helpers: polygon-type validation + bounding boxes.
-// No IO and no Bun imports, so this is unit-testable under vitest.
+// No IO and no Bun imports, so this is unit-testable (bun test).
 
 export type Check = { ok: boolean; detail: string };
 export type BBox = [west: number, south: number, east: number, north: number];

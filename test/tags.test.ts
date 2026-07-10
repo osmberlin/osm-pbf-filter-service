@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect } from "bun:test";
 import { parseFilter, formatFilter, mergeFilters } from "../src/tags";
 
 describe("parseFilter", () => {

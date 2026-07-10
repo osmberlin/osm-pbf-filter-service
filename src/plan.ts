@@ -134,7 +134,12 @@ export function planSteps(
   // Parents first (nodes are already depth-sorted): one read of each parent file
   // produces all its children's geometry, then each child is tag-filtered.
   for (const parent of nodes) {
-    const kids = (childrenOf.get(parent.id) ?? []).filter((k) => k.polygon);
+    const kids = childrenOf.get(parent.id) ?? [];
+    // config.ts guarantees every region has a polygon; a node without one here is
+    // a programmer error. Silently skipping it would emit downstream steps that
+    // read files no step produces — fail loudly instead.
+    const missing = kids.find((k) => !k.polygon);
+    if (missing) throw new Error(`region '${missing.id}' has no polygon — cannot plan its extraction`);
     if (kids.length === 0) continue;
     const input = parent.id === "world" ? paths.planet : filteredFile(paths, parent);
     const strategy = RANK_TO_STRATEGY[Math.max(...kids.map((k) => STRATEGY_RANK[k.strategy] ?? DEFAULT_RANK))];
