@@ -20,7 +20,7 @@ import {
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { loadRegions, loadProjects } from "./config";
-import { buildPlan, type Paths, type Plan, type PlanNode, type PlanStep } from "./plan";
+import { buildPlan, projectOut, type Paths, type Plan, type PlanNode, type PlanStep } from "./plan";
 import type { Project } from "./types";
 import { ghError, ghWarning, errorCount, summaryLine } from "./github";
 
@@ -142,10 +142,8 @@ async function writeStatus(plan: Plan, projects: Project[], durations: Record<st
   const nodeByProject = new Map<string, PlanNode>();
   for (const n of plan.nodes) for (const pid of n.projects) nodeByProject.set(pid, n);
 
-  mkdirSync(REPO_STATUS_DIR, { recursive: true });
-
   for (const p of projects) {
-    const out = path.join(paths.extracts, p.id, "latest.osm.pbf");
+    const out = projectOut(paths, p.id);
     if (!existsSync(out)) continue; // skip in dry-run / when a step was skipped
     const node = nodeByProject.get(p.id);
     const status = {
@@ -171,15 +169,21 @@ async function writeStatus(plan: Plan, projects: Project[], durations: Record<st
       download_url: `${PUBLIC_BASE}/${p.id}/latest.osm.pbf`,
     };
     const json = JSON.stringify(status, null, 2) + "\n";
-    writeFileSync(path.join(paths.extracts, p.id, "status.json"), json); // served by nginx
-    mkdirSync(path.join(REPO_STATUS_DIR, p.id), { recursive: true });
-    writeFileSync(path.join(REPO_STATUS_DIR, p.id, "status.json"), json); // committed for the audit log
+    publish(path.join(p.id, "status.json"), json);
     index.push({ project: p.id, download_url: status.download_url, data_timestamp: status.data_timestamp, extract_run_at: now });
   }
 
   const indexJson = JSON.stringify({ generated_at: now, projects: index }, null, 2) + "\n";
-  writeFileSync(path.join(paths.extracts, "index.json"), indexJson);
-  writeFileSync(path.join(REPO_STATUS_DIR, "index.json"), indexJson);
+  publish("index.json", indexJson);
+}
+
+// Each status file goes to the nginx dir (served) and the repo's status/ (committed audit log).
+function publish(rel: string, json: string): void {
+  for (const base of [paths.extracts, REPO_STATUS_DIR]) {
+    const file = path.join(base, rel);
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file, json);
+  }
 }
 
 function buildPipeline(plan: Plan, leafId: string): string[] {

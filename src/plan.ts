@@ -80,7 +80,7 @@ export function buildNodes(regions: Map<string, Region>, projects: Project[]): P
     const regionId = p.area.region;
     if (!regionId) continue; // custom-polygon scheduling: not wired yet (pre-alpha)
     const chain = resolveChain(regions, regionId);
-    const keepAll = (p.filters ?? []).length === 0;
+    const keepAll = p.filters.length === 0;
     const sr = STRATEGY_RANK[p.osmium.extract_strategy] ?? DEFAULT_RANK;
     for (const rid of chain) {
       const a = ensure(rid);
@@ -113,7 +113,7 @@ export function buildNodes(regions: Map<string, Region>, projects: Project[]): P
 const geoFile = (p: Paths, id: string) => path.join(p.work, `${id}.geo.osm.pbf`);
 const filteredFile = (p: Paths, n: PlanNode) =>
   n.keepAll ? geoFile(p, n.id) : path.join(p.work, `${n.id}.filtered.osm.pbf`);
-const projectOut = (p: Paths, pid: string) => path.join(p.extracts, pid, "latest.osm.pbf");
+export const projectOut = (p: Paths, pid: string) => path.join(p.extracts, pid, "latest.osm.pbf");
 
 /** Ordered osmium steps for a set of nodes (single-pass multi-extract per parent). */
 export function planSteps(
@@ -170,7 +170,7 @@ export function planSteps(
       const p = projById.get(pid)!;
       const input = filteredFile(paths, n);
       const out = projectOut(paths, pid);
-      if ((p.filters ?? []).length === 0) {
+      if (p.filters.length === 0) {
         steps.push({ kind: "copy", project: pid, from: input, to: out });
       } else {
         steps.push({
