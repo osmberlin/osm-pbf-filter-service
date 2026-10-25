@@ -1,8 +1,9 @@
-"""Orchestrator entry point (PLAN.md §B4): load configs, build the plan, write
-plan.json for traceability, then run osmium top-down and write status files.
+"""Orchestrator entry point (PLAN.md §B4).
 
-    python3 -m extractor            # on the server runner
-    python3 -m extractor --dry-run  # write plan.json only, no osmium
+    python3 -m extractor update          # seed missing sources, apply daily diffs
+    python3 -m extractor build           # plan, run osmium, write status files
+    python3 -m extractor build --dry-run # write plan.json only, no osmium
+    python3 -m extractor seed [ids...]   # re-download sources from scratch
 """
 import hashlib
 import json
@@ -13,15 +14,16 @@ import sys
 import time
 from datetime import datetime, timezone
 
-from .config import load_projects, load_regions
-from .github import error_count, gh_error, gh_warning, summary_line
-from .plan import build_plan, project_out, resolve_chain
+from . import sources as src
+from .config import load_projects, load_tree
+from .github import error_count, gh_error, summary_line
+from .plan import build_plan, project_chains, project_out
 
 # Settings live here as constants, not in GitHub env: the repo has one
 # deployment. OSM_ROOT is the only override, for local test runs.
 ROOT = os.environ.get("OSM_ROOT", "/srv/osm")  # = ansible osm_root
 PATHS = {
-    "planet": os.path.join(ROOT, "planet/planet.osm.pbf"),
+    "sources": os.path.join(ROOT, "sources"),  # <id>.osm.pbf + <id>.state.json
     "work": os.path.join(ROOT, "work"),
     "extracts": os.path.join(ROOT, "extracts"),
 }
@@ -101,6 +103,25 @@ def run_step(step: dict) -> float:
             except OSError:
                 shutil.copyfile(step["from"], tmp)
         build_to_tmp(step["to"], copy)
+    elif kind == "merge":
+        def merge(tmp: str) -> None:
+            # Geofabrik continents overlap a little and are cut on different days,
+            # so one object can appear in two versions. Merge keeping history, then
+            # time-filter (no time = "now") keeps only the newest version.
+            # Workaround for https://github.com/osmcode/osmium-tool/issues/197,
+            # same as k-yle/OpenSeaMap-vector (.github/workflows/planet.yml).
+            print("+ osmium merge --with-history … | osmium time-filter", flush=True)
+            m = subprocess.Popen(["osmium", "merge", "--with-history", "-f", "pbf", "-o", "-", *step["inputs"]],
+                                 stdout=subprocess.PIPE)
+            t = subprocess.run(["osmium", "time-filter", "-F", "pbf", "-f", "pbf", "-o", tmp, "-"], stdin=m.stdout)
+            m.stdout.close()
+            if m.wait() != 0 or t.returncode != 0:
+                raise RuntimeError(f"merge for {step['project']} failed")
+        build_to_tmp(step["output"], merge)
+    elif kind == "cleanup":
+        for f in step["files"]:
+            if os.path.exists(f):
+                os.remove(f)
     return round(time.monotonic() - t0, 3)
 
 
@@ -113,19 +134,6 @@ def sha256(file: str) -> str:
     return h.hexdigest()
 
 
-def read_update_state() -> dict:
-    state_path = os.path.join(os.path.dirname(PATHS["planet"]), "update-state.json")
-    if not os.path.exists(state_path):
-        return {}
-    try:
-        with open(state_path, encoding="utf-8") as fh:
-            return json.load(fh)
-    except ValueError as e:
-        # A corrupt state file must not kill the run after hours of osmium work.
-        gh_warning(state_path, f"unreadable update-state.json ({e}); continuing without it")
-        return {}
-
-
 def publish(rel: str, text: str) -> None:
     """Each status file goes to the nginx dir (served) and the repo's status/ (committed audit log)."""
     for base in (PATHS["extracts"], REPO_STATUS_DIR):
@@ -135,8 +143,8 @@ def publish(rel: str, text: str) -> None:
             fh.write(text)
 
 
-def write_status(regions, projects, durations: dict[str, float]) -> None:
-    state = read_update_state()
+def write_status(sources, regions, projects, durations: dict[str, float]) -> None:
+    states = {sid: src.read_state(PATHS, sid) for sid in sources}
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     index = []
 
@@ -145,6 +153,10 @@ def write_status(regions, projects, durations: dict[str, float]) -> None:
         if not os.path.exists(out):
             continue  # skip in dry-run / when a step was skipped
         download_url = f"{PUBLIC_BASE}/{p.id}/latest.osm.pbf"
+        chains = project_chains(sources, regions, p)
+        used = {c[0]: states[c[0]] for c in chains}
+        # A merged (world) extract is only as fresh as its oldest source.
+        stamps = [s.get("data_timestamp") for s in used.values()]
         status = {
             "project": p.id,
             "description": p.description,
@@ -156,13 +168,14 @@ def write_status(regions, projects, durations: dict[str, float]) -> None:
             "sha256": sha256(out),
             "area": p.area,
             "filters": p.filters,
-            "pipeline": resolve_chain(regions, p.area["region"]),
-            # The planet's timestamp (from update-planet.sh) holds for every extract
-            # of this run; osmium extract drops the replication header, so there is
-            # no per-file fallback.
-            "data_timestamp": state.get("data_timestamp"),
-            "planet_sequence_number": state.get("planet_sequence_number"),
-            "update_run_at": state.get("update_run_at"),
+            "pipeline": chains[0] if len(chains) == 1 else [c[0] for c in chains] + ["merge"],
+            # From the sources' state files (osmium extract drops the replication
+            # header, so the extract itself can't tell).
+            "data_timestamp": None if None in stamps else min(stamps, default=None),
+            "sources": {sid: {"url": sources[sid].url,
+                              "data_timestamp": s.get("data_timestamp"),
+                              "sequence_number": s.get("sequence_number"),
+                              "update_run_at": s.get("update_run_at")} for sid, s in used.items()},
             "extract_run_at": now,
             "extract_duration_seconds": durations.get(p.id),
             "download_url": download_url,
@@ -174,18 +187,40 @@ def write_status(regions, projects, durations: dict[str, float]) -> None:
     publish("index.json", to_json({"generated_at": now, "projects": index}))
 
 
-def main(argv: list[str] | None = None) -> int:
-    dry_run = "--dry-run" in (sys.argv[1:] if argv is None else argv)
+def load():
+    sources, regions = load_tree()
+    projects = load_projects(sources, regions)
+    return sources, regions, projects, build_plan(sources, regions, projects, PATHS)
 
-    regions = load_regions()
-    projects = load_projects(regions)
-    plan = build_plan(regions, projects, PATHS)
+
+def active_sources(sources, plan) -> list:
+    return [sources[n["id"]] for n in plan["nodes"] if n["source"]]
+
+
+def cmd_update() -> int:
+    sources, _, _, plan = load()
+    for source in active_sources(sources, plan):
+        src.update(PATHS, source)
+    return 0
+
+
+def cmd_seed(ids: list[str]) -> int:
+    sources, _, _, plan = load()
+    chosen = [sources[i] for i in ids if i in sources] if ids else active_sources(sources, plan)
+    for source in chosen:
+        src.seed(PATHS, source)
+    return 0
+
+
+def cmd_build(dry_run: bool) -> int:
+    sources, regions, projects, plan = load()
 
     with open("plan.json", "w", encoding="utf-8") as fh:
         fh.write(to_json(plan))
 
     summary_line("## OSM extract build")
-    summary_line(f"- active regions: **{sum(1 for n in plan['nodes'] if n['id'] != 'world')}**")
+    summary_line(f"- sources: **{', '.join(s.id for s in active_sources(sources, plan)) or '—'}**")
+    summary_line(f"- active regions: **{sum(1 for n in plan['nodes'] if not n['source'])}**")
     summary_line(f"- projects: **{len(projects)}**")
     summary_line(f"- osmium steps: **{len(plan['steps'])}**")
     if error_count():
@@ -202,11 +237,30 @@ def main(argv: list[str] | None = None) -> int:
         print("dry-run: wrote plan.json; not invoking osmium.")
         return 0
 
+    missing = [s.id for s in active_sources(sources, plan) if not os.path.exists(os.path.join(PATHS["sources"], f"{s.id}.osm.pbf"))]
+    if missing:
+        gh_error("regions/regions.yaml", f"source file(s) missing: {', '.join(missing)} — run `python3 -m extractor update` first")
+        return 1
+
     durations: dict[str, float] = {}
     for step in plan["steps"]:
         secs = run_step(step)
         if step.get("project"):
-            durations[step["project"]] = secs  # leaf-step (final extract) duration, per project
-    write_status(regions, projects, durations)
+            # Final extract duration per project (world projects: summed over pieces + merge).
+            durations[step["project"]] = round(durations.get(step["project"], 0) + secs, 3)
+    write_status(sources, regions, projects, durations)
     print(f"Done: {len(projects)} projects, {len(plan['steps'])} steps.")
     return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = sys.argv[1:] if argv is None else argv
+    cmd, rest = (args[0], args[1:]) if args and not args[0].startswith("-") else ("build", args)
+    if cmd == "update":
+        return cmd_update()
+    if cmd == "seed":
+        return cmd_seed(rest)
+    if cmd == "build":
+        return cmd_build("--dry-run" in rest)
+    print(__doc__)
+    return 2

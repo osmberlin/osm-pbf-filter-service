@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 #
-# DRAFT — fail the run if free disk on the OSM volume is too low (PLAN.md §A6).
-# The planet grows over time and a re-seed needs ~2x planet; guard against
-# silently filling the disk we share with uMap.
+# Fail the run if free disk on the OSM volume is too low (PLAN.md §A6).
+# Updating or re-downloading a source briefly needs room for a second copy of it
+# (Europe ~35 GB), plus intermediate extracts.
 set -euo pipefail
 
 OSM_ROOT="${OSM_ROOT:-/srv/osm}"
-MIN_FREE_GB="${1:-120}"   # GB; optional first argument. Tuned for the 585 GB shared disk
+MIN_FREE_GB="${1:-50}"   # GB; optional first argument. Largest source (Europe ~35 GB) + work files
 
 # -P forces a single, fixed-column line per filesystem (no wrapping); column 4 is
 # Available. Strip the unit suffix; bail if we couldn't parse a number.

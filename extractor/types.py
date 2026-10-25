@@ -4,9 +4,27 @@ from dataclasses import dataclass, field
 
 
 @dataclass
+class Source:
+    """An input file: a Geofabrik continent extract, kept on disk and updated daily."""
+    id: str
+    url: str  # e.g. https://download.geofabrik.de/europe-latest.osm.pbf
+
+    @property
+    def updates_url(self) -> str:
+        # Geofabrik publishes daily diffs next to each extract: europe-latest.osm.pbf
+        # -> europe-updates. Must match the pbf header's osmosis_replication_base_url
+        # exactly (no trailing slash), or pyosmium-up-to-date refuses to run.
+        return self.url.removesuffix("-latest.osm.pbf") + "-updates"
+
+
+# A project area of `region: world` means "every source", merged into one file.
+WORLD = "world"
+
+
+@dataclass
 class Region:
     id: str
-    parent: str  # parent region id, or "world" for a top-level (continent)
+    parent: str  # parent region id, or a source id (= cut straight from that input file)
     polygon: str | None = None  # repo-relative path to a GeoJSON Polygon/MultiPolygon
     name: str | None = None
 

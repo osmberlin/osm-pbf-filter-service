@@ -1,13 +1,15 @@
-# DRAFT — daily pipeline: update the planet, build extracts, commit metadata.
-# See PLAN.md Part C. Runs on the self-hosted runner on the FOSSGIS server.
+# Daily pipeline: update the sources, build the extracts, commit metadata.
+# See PLAN.md Part C. Runs on the self-hosted runner on our own server.
 name: daily
 
 on:
   schedule:
-    - cron: "0 3 * * *"        # TODO: align with when OSMF daily diffs are ready
+    # Geofabrik's daily diffs cover data up to ~20:20 UTC and are published soon
+    # after; 02:17 is safely later and avoids the top-of-hour cron rush.
+    - cron: "17 2 * * *"
   workflow_dispatch: {}        # allow manual runs
 
-# Don't let two pipeline runs touch the planet at once.
+# Don't let two pipeline runs touch the sources at once.
 concurrency:
   group: osm-pipeline
   cancel-in-progress: false
@@ -27,22 +29,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          persist-credentials: false   # don't leave a token in .git/config on the shared runner
+          persist-credentials: false   # don't leave a token in .git/config on the runner
 
       - name: Guard free disk (before update)
-        run: ./scripts/check-disk.sh        # fails loudly below a threshold (PLAN.md §A6)
+        run: ./scripts/check-disk.sh        # an update rewrites a whole source file
 
-      - name: Update planet (apply OSMF diffs)
-        run: ./scripts/update-planet.sh
+      - name: Update sources (download missing, apply Geofabrik daily diffs)
+        run: python3 -m extractor update
 
       - name: Guard free disk (before build)
-        run: ./scripts/check-disk.sh        # the intermediate extracts are disk-hungry
+        run: ./scripts/check-disk.sh        # intermediate extracts need room too
 
       - name: Build extracts
-        run: python3 -m extractor   # orchestrator (extractor/); stdlib + apt python3-yaml
+        run: python3 -m extractor build     # stdlib + apt python3-yaml
 
       - name: Clean intermediate work files
-        if: always()             # even on failure — intermediates are tens of GB on the shared disk
+        if: always()             # even on failure: intermediates are GBs
         run: rm -f /srv/osm/work/*.osm.pbf /srv/osm/work/*.json /srv/osm/work/*.tmp
 
       - name: Commit resolved plan + status

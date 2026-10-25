@@ -7,24 +7,19 @@ Each file must be a GeoJSON **`Polygon`** or **`MultiPolygon`** (a
 validates this on every run and **skips + reports** invalid geometry in the
 Action (see PLAN.md B4 / C1).
 
-Only `neukoelln.geojson` (the test region, OSM boundary admin_level=9) is
-committed so far. The others are small enough to commit too, and committing them
-keeps the hierarchy fully reproducible.
+| File | Source |
+|---|---|
+| `germany.geojson`, `france.geojson`, `hessen.geojson` | Geofabrik `.poly` files (`https://download.geofabrik.de/<path>.poly`), converted to GeoJSON |
+| `neukoelln.geojson` | OSM boundary admin_level=9 "Neukölln", exported with `osmium export` |
 
-## Where to get them
+Polygons are © OpenStreetMap contributors (ODbL).
 
-- **Geofabrik** publishes ready-made `.poly` files for continents and most
-  countries: <https://download.geofabrik.de/> (each region page links a `.poly`).
-  Convert `.poly` → GeoJSON (e.g. with a small script or an existing
-  poly↔geojson converter) before committing here.
-- Or export GeoJSON directly from administrative boundaries.
+## Adding a region
 
-## Expected files (matching the example regions.yaml)
+- **Geofabrik** publishes a `.poly` next to every extract (each region page links
+  it). Convert `.poly` → GeoJSON: each section is a ring, sections starting with
+  `!` are holes. Keep it a MultiPolygon.
+- Or export an administrative boundary from OSM (`osmium tags-filter` +
+  `osmium export -f geojson`).
 
-```
-europe.geojson
-africa.geojson
-germany.geojson
-france.geojson
-hessen.geojson   # Geofabrik: europe/germany/hessen
-```
+Sources (continents) need no polygon: they are whole Geofabrik files.

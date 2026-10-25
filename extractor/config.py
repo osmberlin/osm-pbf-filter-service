@@ -10,7 +10,7 @@ import yaml  # PyYAML — Debian/Ubuntu package python3-yaml
 from .geojson import polygon_geometry_type
 from .github import gh_error, gh_warning
 from .plan import resolve_chain
-from .types import ID_RULE, Project, Region, is_valid_id
+from .types import ID_RULE, WORLD, Project, Region, Source, is_valid_id
 
 REGIONS_DIR = "regions"
 REGIONS_FILE = os.path.join(REGIONS_DIR, "regions.yaml")
@@ -28,21 +28,35 @@ def _validate_polygon_file(file: str) -> tuple[bool, str]:
     return polygon_geometry_type(parsed)
 
 
-def load_regions() -> dict[str, Region]:
-    out: dict[str, Region] = {}
+def load_tree() -> tuple[dict[str, Source], dict[str, Region]]:
+    """Sources (input files) and regions from regions/regions.yaml."""
+    sources: dict[str, Source] = {}
+    regions: dict[str, Region] = {}
     if not os.path.exists(REGIONS_FILE):
         gh_error(REGIONS_FILE, "regions file not found")
-        return out
+        return sources, regions
 
     with open(REGIONS_FILE, encoding="utf-8") as fh:
         raw = yaml.safe_load(fh) or {}
+
+    for src in raw.get("sources") or []:
+        sid = str((src or {}).get("id", ""))
+        url = (src or {}).get("url", "")
+        if not is_valid_id(sid) or sid == WORLD:
+            gh_error(REGIONS_FILE, f"source id '{sid}' is invalid ({ID_RULE}; 'world' is reserved)")
+            continue
+        if not url.startswith("https://") or not url.endswith("-latest.osm.pbf"):
+            gh_error(REGIONS_FILE, f"source '{sid}': url must be an https '…-latest.osm.pbf' download (got '{url}')")
+            continue
+        sources[sid] = Source(id=sid, url=url)
+
     for r in raw.get("regions") or []:
         if not isinstance(r, dict) or not r.get("id") or not r.get("parent"):
             gh_error(REGIONS_FILE, f"region missing id/parent: {json.dumps(r, default=str)}")
             continue
         rid = str(r["id"])
-        if not is_valid_id(rid):
-            gh_error(REGIONS_FILE, f"region id '{rid}' is invalid ({ID_RULE}) — ids become paths and URLs")
+        if not is_valid_id(rid) or rid == WORLD or rid in sources:
+            gh_error(REGIONS_FILE, f"region id '{rid}' is invalid ({ID_RULE}; not 'world' or a source id) — ids become paths and URLs")
             continue
         # Every region must have a polygon: plan_steps cuts each region's geometry
         # from its parent, so a polygon-less region would break every project under it.
@@ -54,21 +68,21 @@ def load_regions() -> dict[str, Region]:
         if not ok:
             gh_error(polygon, f"region '{rid}' polygon invalid: {detail}")
             continue
-        out[rid] = Region(id=rid, parent=str(r["parent"]), polygon=polygon, name=r.get("name"))
+        regions[rid] = Region(id=rid, parent=str(r["parent"]), polygon=polygon, name=r.get("name"))
 
-    # Drop regions whose parent chain doesn't resolve to "world" (same walker the
+    # Drop regions whose parent chain doesn't reach a source (same walker the
     # planner uses, so config validation and planning can never disagree).
-    for rid in list(out):
+    for rid in list(regions):
         try:
-            resolve_chain(out, rid)
+            resolve_chain(sources, regions, rid)
         except ValueError as e:
             gh_error(REGIONS_FILE, f"region '{rid}': {e}")
-            del out[rid]
+            del regions[rid]
 
-    return out
+    return sources, regions
 
 
-def load_projects(regions: dict[str, Region]) -> list[Project]:
+def load_projects(sources: dict[str, Source], regions: dict[str, Region]) -> list[Project]:
     out: list[Project] = []
     if not os.path.isdir(PROJECTS_DIR):
         return out
@@ -104,8 +118,8 @@ def load_projects(regions: dict[str, Region]) -> list[Project]:
         if region and polygon:
             gh_error(cfg_path, "area sets both 'region' and 'polygon'; pick one")
             continue
-        if region and region not in regions:
-            gh_error(cfg_path, f"unknown region '{region}' (not a valid id in regions.yaml)")
+        if region and region != WORLD and region not in regions and region not in sources:
+            gh_error(cfg_path, f"unknown region '{region}' (not a region or source in regions.yaml, nor 'world')")
             continue
         if polygon:
             ok, detail = _validate_polygon_file(os.path.join(folder, polygon))

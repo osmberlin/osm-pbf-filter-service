@@ -1,0 +1,40 @@
+# Manual full re-download of source files (PLAN.md §B1 / §C3). Never automatic:
+# the daily job downloads a missing source by itself, so this is only for a
+# corrupt or hopelessly outdated file. Requires typing "reseed" to confirm.
+name: seed-sources
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "reseed" to confirm a full re-download'
+        required: true
+      sources:
+        description: "Source ids, space-separated (empty = every source in use)"
+        required: false
+        default: ""
+
+concurrency:
+  group: osm-pipeline          # share the lock with daily.yml
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  seed:
+    if: ${{ inputs.confirm == 'reseed' }}
+    runs-on: [self-hosted, osm]
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Guard free disk (old + new file coexist until the swap)
+        run: ./scripts/check-disk.sh
+
+      - name: Download + verify + atomically replace
+        env:
+          SOURCES: ${{ inputs.sources }}   # via env, never interpolated into the script
+        run: python3 -m extractor seed $SOURCES
