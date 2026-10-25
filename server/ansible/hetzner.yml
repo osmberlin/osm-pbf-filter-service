@@ -1,0 +1,123 @@
+---
+# Create the Hetzner Cloud infrastructure (SSH key, firewall, server) and
+# provision it with the osm_extract_service role. Idempotent by resource name:
+# re-running changes nothing unless a variable changed.
+#
+#   export HCLOUD_TOKEN=...            # project API token (read/write), never stored in the repo
+#   ansible-playbook hetzner.yml
+#
+# Override variables with -e, e.g. -e hcloud_location=nbg1.
+
+- name: Create the Hetzner Cloud server
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    hcloud_token: "{{ lookup('env', 'HCLOUD_TOKEN') }}"
+    hcloud_server_name: osm-extracts
+    hcloud_server_type: cx43
+    hcloud_image: debian-12
+    hcloud_location: fsn1               # alternative: nbg1
+    hcloud_ssh_key_name: osm-extracts
+    hcloud_ssh_public_key_path: "{{ lookup('env', 'HOME') }}/.ssh/id_ed25519.pub"
+    hcloud_firewall_name: osm-extracts
+    hcloud_ssh_source_ips: ["0.0.0.0/0", "::/0"]   # restrict to your IP if it is stable
+    hcloud_labels:
+      project: osm-pbf-filter-service
+  module_defaults:
+    group/hetzner.hcloud.all:
+      api_token: "{{ hcloud_token }}"
+  tasks:
+    - name: Fail early if HCLOUD_TOKEN is not set
+      ansible.builtin.assert:
+        that: hcloud_token | length > 0
+        fail_msg: >-
+          HCLOUD_TOKEN is not set. Create a read/write API token in the Hetzner
+          Cloud project (Security -> API tokens) and run: export HCLOUD_TOKEN=...
+        quiet: true
+
+    - name: Fail early if the SSH public key file is missing
+      ansible.builtin.stat:
+        path: "{{ hcloud_ssh_public_key_path }}"
+      register: pubkey_file
+      failed_when: not pubkey_file.stat.exists
+      # on failure: set -e hcloud_ssh_public_key_path=/path/to/key.pub
+
+    - name: Ensure the SSH key exists
+      hetzner.hcloud.ssh_key:
+        name: "{{ hcloud_ssh_key_name }}"
+        public_key: "{{ lookup('ansible.builtin.file', hcloud_ssh_public_key_path) }}"
+        labels: "{{ hcloud_labels }}"
+        state: present
+
+    - name: Ensure the Cloud Firewall exists (inbound 22, 80, 443)
+      hetzner.hcloud.firewall:
+        name: "{{ hcloud_firewall_name }}"
+        labels: "{{ hcloud_labels }}"
+        rules:
+          - description: ssh
+            direction: in
+            protocol: tcp
+            port: "22"
+            source_ips: "{{ hcloud_ssh_source_ips }}"
+          - description: http
+            direction: in
+            protocol: tcp
+            port: "80"
+            source_ips: ["0.0.0.0/0", "::/0"]
+          - description: https
+            direction: in
+            protocol: tcp
+            port: "443"
+            source_ips: ["0.0.0.0/0", "::/0"]
+        state: present
+
+    - name: Ensure the server exists
+      hetzner.hcloud.server:
+        name: "{{ hcloud_server_name }}"
+        server_type: "{{ hcloud_server_type }}"
+        image: "{{ hcloud_image }}"
+        location: "{{ hcloud_location }}"
+        ssh_keys: ["{{ hcloud_ssh_key_name }}"]
+        firewalls: ["{{ hcloud_firewall_name }}"]
+        labels: "{{ hcloud_labels }}"
+        state: started
+      register: server
+
+    - name: Wait for SSH
+      ansible.builtin.wait_for:
+        host: "{{ server.hcloud_server.ipv4_address }}"
+        port: 22
+        delay: 5
+        timeout: 300
+        search_regex: OpenSSH
+
+    - name: Add the server to the in-memory inventory
+      ansible.builtin.add_host:
+        name: "{{ hcloud_server_name }}"
+        groups: osm_extract_new
+        ansible_host: "{{ server.hcloud_server.ipv4_address }}"
+        ansible_user: root
+        ansible_ssh_common_args: "-o StrictHostKeyChecking=accept-new"
+        server_ipv4: "{{ server.hcloud_server.ipv4_address }}"
+
+- name: Provision the server
+  hosts: osm_extract_new
+  become: true
+  roles:
+    - role: osm_extract_service
+      vars:
+        osm_download_hostname: "_"   # IP only for now; set a real domain later
+
+- name: Next steps
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Print the address and the manual steps
+      ansible.builtin.debug:
+        msg:
+          - "Server {{ hostvars[hcloud_server_name].inventory_hostname }} is ready at {{ hostvars[hcloud_server_name].server_ipv4 }}"
+          - "1. Register the GitHub Actions runner (docs/server-setup.md, step 6)."
+          - "2. Set PUBLIC_BASE in extractor/build.py to http://{{ hostvars[hcloud_server_name].server_ipv4 }}/extracts and push."
+          - "3. Run Actions -> daily."

@@ -1,0 +1,4 @@
+---
+collections:
+  - name: hetzner.hcloud     # Hetzner Cloud modules (server, firewall, ssh_key)
+  - name: community.general  # ufw module used by the role

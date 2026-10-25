@@ -4,29 +4,73 @@ How we set up our own server for the service. Background: [PLAN.md](../PLAN.md)
 Part A, provisioning details: [server/ansible/README.md](../server/ansible/README.md).
 
 **Server:** Hetzner Cloud **CX43** (8 vCPU shared, 16 GB RAM, 160 GB NVMe), Debian 12, always on.
-**Cost:** ~€16/month for the server + ~€0.50/month for the IPv4 address.
+**Cost:** CX43 roughly €16/month + primary IPv4 roughly €0.50/month (check the current price at <https://www.hetzner.com/cloud>).
 
 What ends up on it: user `osmrunner` (no sudo), `/srv/osm/{sources,work,extracts}`,
 the GitHub Actions runner (outbound only), nginx serving `/extracts/`. Everything
 else is handled by the workflows.
 
-## 1. Create the server (Hetzner Cloud console)
+## Agents
 
-1. New project (or an existing one) -> **Add Server**.
-2. Location **Falkenstein** or **Nuremberg**, image **Debian 12**, type **CX43** (shared vCPU, regular performance).
-3. Networking: public IPv4 (needed for GitHub/Geofabrik access and for the extract URLs) and IPv6.
-4. **SSH key**: add your public key (initial login is `root` with this key).
-5. **Firewalls** -> create a Cloud Firewall with inbound rules **22, 80, 443** (TCP, any source; restrict 22 to your IP if it is stable). Outbound: allow all. Attach it to the server.
-6. Name it `hetzner-osm`, create, and note the IPv4 address.
+Everything below except the account, billing and the runner token is code in
+`server/ansible/`. An agent with `HCLOUD_TOKEN` and an SSH key can run the
+playbooks; everything it changes is a diff in the repo.
 
-## 2. Run Ansible
+## Plan
+
+First run: **Europe only** (~35 GB). Then enable the world (see
+`regions/regions.yaml` and, once enabled, `projects/openseamap-vector`). All
+continents peak at roughly 130 GB of the 160 GB disk. If that gets tight, add a
+Hetzner Volume later.
+
+## Checklist
+
+### 1. Hetzner account and project
+
+Create (or use) a Hetzner Cloud account, billing set up (decide who pays), and a
+new project named **osm-extracts**.
+
+### 2. API token
+
+In the project: **Security -> API tokens -> Generate**, permission **Read & Write**.
+Store it only locally (password manager). In the shell that runs Ansible:
 
 ```bash
-ansible-galaxy collection install community.general
-cd server/ansible
-cp inventory.example.ini inventory.ini    # replace the IP with the server's
-ansible-playbook -i inventory.ini playbook.example.yml
+export HCLOUD_TOKEN=...
 ```
+
+It is never written into the repo or a file.
+
+### 3. SSH key
+
+Have an ed25519 key (`ssh-keygen -t ed25519`). The playbook uploads
+`~/.ssh/id_ed25519.pub` (change with `-e hcloud_ssh_public_key_path=...`);
+the private key must be usable by ssh (agent or default key).
+
+### 4. Install the Ansible tooling
+
+Recommended (isolated from system Python):
+
+```bash
+uv tool install ansible-core --with requests --with python-dateutil
+cd server/ansible
+ansible-galaxy collection install -r requirements.yml
+```
+
+The current `hetzner.hcloud` collection needs `requests` and `python-dateutil`
+on the controller (not the old `hcloud` package). With Homebrew Ansible they
+are already included.
+
+### 5. Create and provision the server
+
+```bash
+cd server/ansible
+ansible-playbook hetzner.yml
+```
+
+This creates the SSH key, the Cloud Firewall (22/80/443), a **CX43** with
+Debian 12 in `fsn1` (use `-e hcloud_location=nbg1` for Nuremberg), waits for SSH,
+runs the role, and prints the IP. Details: [server/ansible/README.md](../server/ansible/README.md).
 
 Check on the server (`ssh root@<ip>`):
 
@@ -38,14 +82,12 @@ nginx -t && curl -I http://localhost/extracts/   # 404 is fine: the folder is em
 ufw status                        # 22, 80, 443 allowed
 ```
 
-## 3. Get a runner token
+### 6. Register the GitHub Actions runner
 
-GitHub repo -> **Settings -> Actions -> Runners -> New self-hosted runner** (Linux x64).
-Copy the one-time token and the current runner version from that page. The token expires after an hour.
+Repo -> **Settings -> Actions -> Runners -> New self-hosted runner** (Linux x64).
+Copy the one-time token and runner version (the token expires after an hour).
 
-## 4. Register the GitHub Actions runner
-
-As `osmrunner` (replace `<VERSION>` and `<TOKEN>`; the download link is on the same GitHub page):
+As `osmrunner` (replace `<VERSION>` and `<TOKEN>`):
 
 ```bash
 su - osmrunner
@@ -57,7 +99,7 @@ tar xzf actions-runner-linux-x64-<VERSION>.tar.gz
 exit
 ```
 
-Then, as **root** (osmrunner has no sudo, so root installs the dependencies and the service):
+Then as **root** (osmrunner has no sudo):
 
 ```bash
 cd /home/osmrunner/actions-runner
@@ -67,35 +109,45 @@ cd /home/osmrunner/actions-runner
 ./svc.sh status
 ```
 
-GitHub should show the runner `hetzner-osm` as **Idle** with the label `osm`.
+GitHub should show `hetzner-osm` as **Idle** with the label `osm`.
 
-## 5. Point the code at the server
+### 7. Point the code at the server
 
-GitHub repository settings are already done (fork-PR approval, collaborator-only
-PRs; see [README -> GitHub repository settings](../README.md#github-repository-settings-done-2026-10-25)).
-No GitHub variables or secrets are needed.
-
-Set `PUBLIC_BASE` in `extractor/build.py` to the server IP for now, and commit:
+GitHub repository settings are already done (see
+[README -> GitHub repository settings](../README.md#github-repository-settings-done-2026-10-25)).
+No GitHub variables or secrets are needed. Set in `extractor/build.py` and push:
 
 ```python
 PUBLIC_BASE = "http://<server-ip>/extracts"
 ```
 
-Once a domain exists: set `osm_download_hostname` in the playbook, re-run Ansible,
-run `certbot --nginx -d <hostname>` on the server, and change `PUBLIC_BASE` to `https://<hostname>/extracts`.
+### 8. First run
 
-## 6. First run
+**Actions -> daily -> Run workflow.** The first run downloads Europe (~35 GB,
+expect ~10-30 min), later runs only apply Geofabrik's daily diffs. Use
+**seed-sources** only to force a full re-download of a corrupt source.
 
-**Actions -> daily -> Run workflow.** The first run downloads Europe (~35 GB;
-expect ~10–30 min) before the build starts. Later runs only apply Geofabrik's daily diffs.
-Use **seed-sources** only to force a full re-download of a corrupt source.
-
-Verify:
+### 9. Checks
 
 - `http://<server-ip>/extracts/index.json` lists the projects;
 - `http://<server-ip>/extracts/<project>/status.json` has a recent `data_timestamp`;
 - `curl -O http://<server-ip>/extracts/<project>/latest.osm.pbf && osmium fileinfo latest.osm.pbf` works;
 - the run committed `status/` and `plan.json` back to `main`.
+
+### 10. Later: domain and TLS
+
+Set `osm_download_hostname` (in `hetzner.yml` or the play), re-run the playbook,
+run `certbot --nginx -d <hostname>` on the server, and change `PUBLIC_BASE` to
+`https://<hostname>/extracts`.
+
+### 11. Teardown
+
+```bash
+ansible-playbook hetzner-destroy.yml -e confirm=yes
+```
+
+Deletes the server **and all downloaded data** (re-download on the next
+setup); the SSH key and firewall stay.
 
 ## Debugging
 
@@ -103,7 +155,7 @@ Most failures show up as a red Actions run with an `::error::` line and can be f
 
 | Symptom | Likely cause | What to do |
 |---|---|---|
-| Job stays **"Queued"** | Runner service is down or de-registered | As root: `cd /home/osmrunner/actions-runner && ./svc.sh status` / `start`; `journalctl -u 'actions.runner.*'`. If de-registered, repeat step 4 with a new token. |
+| Job stays **"Queued"** | Runner service is down or de-registered | As root: `cd /home/osmrunner/actions-runner && ./svc.sh status` / `start`; `journalctl -u 'actions.runner.*'`. If de-registered, repeat step 6 with a new token. |
 | `Only N GB free on /srv/osm … Aborting` | Disk full (160 GB; Europe ~35 GB, plus a second copy during updates, plus extracts) | `df -h /srv/osm`; `/srv/osm/work/` is always safe to delete; delete old extracts or resize the server/attach a volume. |
 | `pyosmium-up-to-date failed … exit code` | Geofabrik outage/network, or a corrupt source | Usually clears on the next run. If it repeats, run **seed-sources** (`reseed`) for that source. |
 | osmium killed / exit 137 | Out of memory (16 GB) | `dmesg -T \| grep -i oom`. Use a lighter extract strategy (`complete_ways`) in the project config, or upgrade to a bigger server type. |

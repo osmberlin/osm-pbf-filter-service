@@ -1,0 +1,89 @@
+# OpenSeaMap-vector — vector rewrite of OpenSeaMap.org by Kyle Hensel (k-yle).
+#   -> served at <host>/extracts/openseamap-vector/latest.osm.pbf
+#
+# Filters copied from the project's own osmium tags-filter expressions:
+# https://github.com/k-yle/OpenSeaMap-vector/blob/main/data/osmium-tags-filter.ini
+# The project folder belongs to OpenSeaMap-vector; it is collected here so the
+# extract can run centrally.
+#
+# area: world = every source in regions/regions.yaml, filtered one continent at
+# a time and merged. While only Europe is enabled there, this is a Europe extract.
+
+description: Seamarks and water-related features for OpenSeaMap-vector (worldwide).
+repository: https://github.com/k-yle/OpenSeaMap-vector
+homepage: https://kyle.kiwi/OpenSeaMap-vector
+contact: k-yle
+
+area:
+  region: world
+
+filters:
+  - nwr/seamark:type
+  - nwr/aeroway=windsock
+  - nwr/amenity=boat_rental
+  - nwr/amenity=boat_storage
+  - nwr/amenity=charging_station
+  - nwr/amenity=ferry_terminal
+  - nwr/amenity=fish_cleaning
+  - nwr/amenity=sailing_school
+  - nwr/barrier=floating_boom
+  - nwr/barrier=shark_net
+  - nwr/building=ship
+  - nwr/canoe=egress
+  - nwr/canoe=portage
+  - nwr/canoe=put_in
+  - nwr/canoe=put_in;egress
+  - nwr/club=boat
+  - nwr/club=boating
+  - nwr/club=sailing
+  - nwr/club=yachting
+  - nwr/education=sailing_school
+  - nwr/emergency=water_rescue
+  - nwr/historic=ship
+  - nwr/historic=wreck
+  - nwr/industrial=shipyard
+  - nwr/leisure=fishing
+  - nwr/leisure=marina
+  - nwr/leisure=slipway
+  - nwr/leisure=swimming_area
+  - nwr/lock=yes
+  - nwr/man_made=dolphin
+  - nwr/man_made=lighthouse
+  - nwr/man_made=offshore_platform
+  - nwr/natural=beach
+  - nwr/police=naval_base
+  - nwr/portage
+  - nwr/rapids
+  - nwr/scout=sea
+  - nwr/sport=sailing
+  - nwr/sport=rowing
+  - nwr/training=maritime
+  - nwr/training=sailing
+  - nwr/waterway=access_point
+  - nwr/waterway=boat_lift
+  - nwr/waterway=boatyard
+  - nwr/waterway=canoe_pass
+  - nwr/waterway=check_dam
+  - nwr/waterway=dam
+  - nwr/waterway=debris_screen
+  - nwr/waterway=dock
+  - nwr/waterway=floating_barrier
+  - nwr/waterway=floodgate
+  - nwr/waterway=fuel
+  - nwr/waterway=lock_gate
+  - nwr/waterway=milestone
+  - nwr/waterway=rapids
+  - nwr/waterway=sanitary_dump_station
+  - nwr/waterway=security_lock
+  - nwr/waterway=sluice_gate
+  - nwr/waterway=turning_point
+  - nwr/waterway=water_point
+  - nwr/waterway=weir
+  - nwr/water=rapids
+  - nwr/whitewater
+  - nwr/whitewater:rapid_grade
+  - nwr/whitewater:section_grade
+
+osmium:
+  extract_strategy: smart   # unused for a source-level leaf (no region cut)
+  add_referenced: true      # keep the nodes of matched ways/relations

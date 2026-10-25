@@ -25,19 +25,41 @@ server for normal operation. Step-by-step guide:
 7. enables `ufw` with 22, 80, 443 allowed and everything else inbound denied.
 
 **Firewall decision:** the main filter is the **Hetzner Cloud Firewall**
-(created in the console, free, rules 22/80/443). `ufw` is a second layer on the
+(created by `hetzner.yml`, free, rules 22/80/443). `ufw` is a second layer on the
 box, kept minimal; set `osm_enable_ufw: false` to drop it.
 
 Variables are in [defaults/main.yml](roles/osm_extract_service/defaults/main.yml).
 Override per inventory or in the play.
 
-## Run
+## Two ways to run it
 
-Needs Ansible on your machine plus the `community.general` collection (for `ufw`):
+**A. New Hetzner server, fully from code** ([hetzner.yml](hetzner.yml)). Creates the
+SSH key, Cloud Firewall (22/80/443 in) and the server with the `hetzner.hcloud`
+modules, waits for SSH, then runs the role. No OpenTofu and no state file: the
+modules are idempotent by resource name (re-running changes nothing).
 
 ```bash
-ansible-galaxy collection install community.general
+# one-time tooling (see docs/server-setup.md step 4)
+uv tool install ansible-core --with requests --with python-dateutil
 cd server/ansible
+ansible-galaxy collection install -r requirements.yml
+export HCLOUD_TOKEN=...          # read/write token of the Hetzner project; never written to a file
+ansible-playbook hetzner.yml
+```
+
+Variables (override with `-e`): `hcloud_server_name` (osm-extracts),
+`hcloud_server_type` (cx43), `hcloud_image` (debian-12), `hcloud_location`
+(fsn1; or nbg1), `hcloud_ssh_public_key_path` (`~/.ssh/id_ed25519.pub`),
+`hcloud_ssh_source_ips` (restrict SSH to your IP), `hcloud_labels`.
+The key's private half must be available to ssh (agent or default key).
+Tear down with `ansible-playbook hetzner-destroy.yml -e confirm=yes`
+(deletes the server and all its data; key and firewall stay).
+
+**B. Existing server** (e.g. FOSSGIS later): [playbook.example.yml](playbook.example.yml)
+with an inventory; only the role runs.
+
+```bash
+ansible-galaxy collection install -r requirements.yml   # community.general is enough here
 cp inventory.example.ini inventory.ini   # put the server IP in; initial login is root with your SSH key
 ansible-playbook -i inventory.ini playbook.example.yml
 ```
@@ -48,7 +70,7 @@ The role is idempotent; re-run it after OS upgrades or variable changes.
 
 Runner registration needs a one-time token from GitHub (Settings -> Actions ->
 Runners -> New self-hosted runner), so it stays manual. Full commands with the
-current runner version are in [docs/server-setup.md](../../docs/server-setup.md#4-register-the-github-actions-runner).
+current runner version are in [docs/server-setup.md](../../docs/server-setup.md#6-register-the-github-actions-runner).
 In short: download the runner as `osmrunner`, `./config.sh --labels osm
 --name hetzner-osm`, then as root `./svc.sh install osmrunner && ./svc.sh start`.
 

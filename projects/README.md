@@ -14,6 +14,13 @@ projects/
     area.geojson       # optional — custom Polygon/MultiPolygon, if not using a named region
 ```
 
+## Ownership
+
+Each project folder belongs to its project. This repo only collects them so the
+extracts can run centrally. A folder may carry its own `LICENSE` or a reference
+to where its filter list comes from (see `openseamap-vector/config.yaml`).
+Changes to a folder should come from, or be agreed with, the project's `contact`.
+
 ## config.yaml schema
 
 ```yaml
