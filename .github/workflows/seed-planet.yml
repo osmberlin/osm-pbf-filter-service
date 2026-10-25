@@ -27,9 +27,7 @@ jobs:
           persist-credentials: false
 
       - name: Guard free disk (reseed briefly needs ~2x planet)
-        env:
-          MIN_FREE_GB: "180"   # old + new planet coexist during the swap (PLAN §A1)
-        run: ./scripts/check-disk.sh
+        run: ./scripts/check-disk.sh 180   # GB: old + new planet coexist during the swap (PLAN §A1)
 
       - name: Download + verify + atomically replace planet
         run: ./scripts/seed-planet.sh

@@ -7,6 +7,10 @@ set -euo pipefail
 OSM_ROOT="${OSM_ROOT:-/srv/osm}"
 PLANET="$OSM_ROOT/planet/planet.osm.pbf"
 STATE="$OSM_ROOT/planet/update-state.json"
+# OSMF (the foundation) daily planet diffs — worldwide. Regional alternative:
+# https://download.openstreetmap.fr/replication/<continent>/<country>/day/
+REPLICATION_URL="https://planet.openstreetmap.org/replication/day"
+MAX_DOWNLOAD_MB=3000   # see the update loop below
 
 # NOTE: GitHub parses workflow commands (::error::) from STDOUT, not stderr.
 if [[ ! -f "$PLANET" ]]; then
@@ -26,7 +30,7 @@ echo "==> Applying replication diffs with pyosmium-up-to-date"
 # for longer gaps.
 for attempt in $(seq 1 10); do
   rc=0
-  pyosmium-up-to-date --size "${PYOSMIUM_MAX_MB:-3000}" --server https://planet.openstreetmap.org/replication/day "$PLANET" || rc=$?
+  pyosmium-up-to-date --size "$MAX_DOWNLOAD_MB" --server "$REPLICATION_URL" "$PLANET" || rc=$?
   case "$rc" in
     0) break ;;
     1) echo "==> More diffs pending after pass $attempt (download cap reached); continuing" ;;

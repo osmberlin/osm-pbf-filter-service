@@ -41,17 +41,20 @@ Repo: https://github.com/osmberlin/osm-pbf-filter-service
 |---|---|
 | 2.1 | **Settings → Actions → Runners → New self-hosted runner**: copy the one-time token for step 1.4. |
 | 2.2 | **Settings → Actions → General → Fork pull request workflows**: set "Require approval for all outside collaborators". This is mandatory, because the repo is public and the runner sits on a shared server (PLAN.md §A3). |
-| 2.3 | **Settings → Secrets and variables → Actions → Variables**: add `OSM_PUBLIC_BASE` = `https://<hostname>/extracts` (used in the `download_url` of each `status.json`). |
+| 2.3 | Put the agreed hostname in the code: `PUBLIC_BASE` in `src/build.ts` and `osm_download_hostname` in the Ansible inventory. No GitHub variables or secrets are needed. |
 | 2.4 | **Actions → seed-planet → Run workflow**, type `reseed`. This downloads the 87 GB planet and checks its md5. It takes a few hours, and the session doesn't need to wait for it. |
 
 ## Part 3 — Test (us, after the seed finishes)
 
-1. **Dry run without osmium:** Actions → `daily` → Run workflow. Before polygons are committed, the build step stops with a clear "region has no polygon" error. That is expected, and it confirms that the runner, Bun, the planet update and the disk guard work.
-2. **Commit region polygons** for one small test chain, e.g. `europe → germany` in `regions/polygons/`, and enable one small project. A good first test: a copy of `projects/spieli` cut down to a few tags in a small region.
-3. Run `daily` again. Check that:
-   - `https://<hostname>/extracts/index.json` lists the project;
-   - `https://<hostname>/extracts/<project>/status.json` has a recent `data_timestamp`;
-   - `curl -O https://<hostname>/extracts/<project>/latest.osm.pbf && osmium fileinfo latest.osm.pbf` works;
+The repo ships a small test project, `projects/test-neukoelln` (spieli's tag set,
+cut to Berlin-Neukölln straight from the planet). It is the only project with a
+committed polygon so far. The other projects are skipped with a "region has no
+polygon" annotation, which is expected.
+
+1. Actions → `daily` → Run workflow. Check that:
+   - `https://<hostname>/extracts/index.json` lists `test-neukoelln`;
+   - `https://<hostname>/extracts/test-neukoelln/status.json` has a recent `data_timestamp`;
+   - `curl -O https://<hostname>/extracts/test-neukoelln/latest.osm.pbf && osmium fileinfo latest.osm.pbf` works;
    - the run committed `status/` and `plan.json` back to `main`.
 
 ## Debugging — cases that need the admin

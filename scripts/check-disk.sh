@@ -6,7 +6,7 @@
 set -euo pipefail
 
 OSM_ROOT="${OSM_ROOT:-/srv/osm}"
-MIN_FREE_GB="${MIN_FREE_GB:-120}"   # tune for the 585 GB shared disk
+MIN_FREE_GB="${1:-120}"   # GB; optional first argument. Tuned for the 585 GB shared disk
 
 # -P forces a single, fixed-column line per filesystem (no wrapping); column 4 is
 # Available. Strip the unit suffix; bail if we couldn't parse a number.

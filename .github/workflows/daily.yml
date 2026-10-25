@@ -39,13 +39,11 @@ jobs:
         run: ./scripts/check-disk.sh        # the intermediate extracts are disk-hungry
 
       - name: Build extracts
-        env:
-          OSM_PUBLIC_BASE: ${{ vars.OSM_PUBLIC_BASE }}   # repo variable, e.g. https://<host>/extracts
         run: bun run build       # orchestrator (src/build.ts); no deps — uses Bun's native YAML
 
       - name: Clean intermediate work files
         if: always()             # even on failure — intermediates are tens of GB on the shared disk
-        run: rm -f "${OSM_ROOT:-/srv/osm}/work"/*.osm.pbf "${OSM_ROOT:-/srv/osm}/work"/*.json "${OSM_ROOT:-/srv/osm}/work"/*.tmp
+        run: rm -f /srv/osm/work/*.osm.pbf /srv/osm/work/*.json /srv/osm/work/*.tmp
 
       - name: Commit resolved plan + status
         env:

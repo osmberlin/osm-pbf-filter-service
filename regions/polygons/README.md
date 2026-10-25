@@ -7,8 +7,8 @@ Each file must be a GeoJSON **`Polygon`** or **`MultiPolygon`** (a
 validates this on every run and **skips + reports** invalid geometry in the
 Action (see PLAN.md B4 / C1).
 
-These files are intentionally **not committed yet** (decision pending — see
-PLAN.md "Open questions"). They are small enough to commit, and committing them
+Only `neukoelln.geojson` (the test region, OSM boundary admin_level=9) is
+committed so far. The others are small enough to commit too, and committing them
 keeps the hierarchy fully reproducible.
 
 ## Where to get them

@@ -11,7 +11,8 @@ installed on the community server.
 > **Status: pre-alpha.** The planning logic in `src/` is implemented and
 > unit-tested (`bun run test`, run in CI on GitHub-hosted runners). The osmium
 > **execution** path (`scripts/`, `server/`, runner workflows) exists but has not
-> been run end-to-end yet. No polygons are committed, so a live run is not wired up.
+> been run on the server yet. A local end-to-end run works (see below); only the
+> Neukölln test polygon is committed so far.
 
 ## Start here
 
@@ -37,3 +38,16 @@ computes the **union of tags** required at each level, and runs `osmium` from th
 top down (world → continent → country → project) so every intermediate extract is
 as small as possible. Results are served by nginx with a `status.json` next to
 each file describing how old the data is.
+
+## Local end-to-end test
+
+Any `.osm.pbf` can stand in for the planet, e.g. a Geofabrik Berlin extract for
+the `test-neukoelln` project:
+
+```bash
+mkdir -p /tmp/osm/planet && ln -s ~/Downloads/berlin-latest.osm.pbf /tmp/osm/planet/planet.osm.pbf
+OSM_ROOT=/tmp/osm bun run build   # -> /tmp/osm/extracts/test-neukoelln/latest.osm.pbf
+```
+
+This writes `plan.json` and `status/` into the repo; don't commit them from a
+local run.

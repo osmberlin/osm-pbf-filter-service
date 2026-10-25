@@ -8,6 +8,14 @@
 # invalid geometry is skipped and reported in the Action.
 
 regions:
+  # --- test region: cut straight from the planet, so it works before any
+  # continent/country polygons are committed. Polygon = OSM boundary
+  # admin_level=9 "Neukölln" (Berlin district).
+  - id: neukoelln
+    name: Neukölln (Berlin) — test
+    parent: world
+    polygon: ./polygons/neukoelln.geojson
+
   # --- continents (parent: world = the full planet) ---
   - id: europe
     name: Europe

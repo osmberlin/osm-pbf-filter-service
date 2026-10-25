@@ -1,0 +1,53 @@
+# Test project: the spieli tag set, cut to Berlin-Neukölln. Small and fast, and
+# its region has a committed polygon, so it produces data on the first real run.
+#   -> served at <host>/extracts/test-neukoelln/latest.osm.pbf
+
+description: Test extract — spieli's playground POI tags for Berlin-Neukölln.
+repository: https://github.com/osmberlin/osm-pbf-filter-service
+homepage: https://github.com/osmberlin/osm-pbf-filter-service
+contact: tordans
+
+area:
+  region: neukoelln
+
+filters:
+  - n/natural=tree
+  - w/natural=tree_row
+  - n/leisure=playground
+  - n/leisure=pitch
+  - n/leisure=fitness_station
+  - n/leisure=picnic_table
+  - n/amenity=bench
+  - n/amenity=shelter
+  - n/amenity=toilets
+  - n/amenity=ice_cream
+  - n/amenity=cafe
+  - n/amenity=restaurant
+  - n/highway=bus_stop
+  - n/shop=chemist
+  - n/shop=supermarket
+  - n/shop=convenience
+  - n/emergency
+  - n/playground
+  - w/leisure=playground
+  - w/leisure=pitch
+  - w/leisure=fitness_station
+  - w/leisure=picnic_table
+  - w/amenity=bench
+  - w/amenity=shelter
+  - w/amenity=toilets
+  - w/amenity=ice_cream
+  - w/amenity=cafe
+  - w/amenity=restaurant
+  - w/shop=chemist
+  - w/shop=supermarket
+  - w/shop=convenience
+  - w/playground
+  - r/leisure=playground
+  - r/leisure=pitch
+  - r/type=multipolygon
+  - r/boundary=administrative
+
+osmium:
+  extract_strategy: smart
+  add_referenced: true

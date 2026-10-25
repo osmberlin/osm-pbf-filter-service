@@ -24,25 +24,22 @@ import { buildPlan, projectOut, type Paths, type Plan, type PlanNode, type PlanS
 import type { Project } from "./types";
 import { ghError, ghWarning, errorCount, summaryLine } from "./github";
 
-// One root knob (matches the scripts' OSM_ROOT and the ansible osm_root var);
-// the individual paths can still be overridden separately.
-const ROOT = process.env.OSM_ROOT ?? "/srv/osm";
+// Settings live here as constants, not in GitHub env: the repo has one
+// deployment. OSM_ROOT is the only override, for local test runs.
+const ROOT = process.env.OSM_ROOT ?? "/srv/osm"; // = ansible osm_root
 const paths: Paths = {
-  planet: process.env.OSM_PLANET ?? path.join(ROOT, "planet/planet.osm.pbf"),
-  work: process.env.OSM_WORK ?? path.join(ROOT, "work"),
-  extracts: process.env.OSM_EXTRACTS ?? path.join(ROOT, "extracts"),
+  planet: path.join(ROOT, "planet/planet.osm.pbf"),
+  work: path.join(ROOT, "work"),
+  extracts: path.join(ROOT, "extracts"),
 };
-// Set via the OSM_PUBLIC_BASE repo variable (daily.yml); an unset variable arrives as "".
-const PUBLIC_BASE = process.env.OSM_PUBLIC_BASE || "https://osm.example.org/extracts";
+// Public URL of the nginx extracts dir (= ansible osm_download_hostname).
+// TODO: set the real hostname once agreed with the FOSSGIS admin.
+const PUBLIC_BASE = "https://osm.example.org/extracts";
 
 // status.json is written next to each extract (served by nginx) AND copied into
 // the repo-relative status/ dir so commit-results.sh can commit the audit log
-// (PLAN.md §B6). The dir is created even with zero projects so the commit step
-// always has a path to stage.
-const REPO_STATUS_DIR = process.env.OSM_STATUS_DIR ?? "status";
-
-/** Env flag: set and not "0"/"false"/"no". `OSM_DRY_RUN=false` must NOT dry-run. */
-const envFlag = (v: string | undefined) => !!v && !["0", "false", "no"].includes(v.toLowerCase());
+// (PLAN.md §B6).
+const REPO_STATUS_DIR = "status";
 
 function osmiumExtractConfig(step: Extract<PlanStep, { kind: "extract-multi" }>) {
   return {
@@ -88,7 +85,8 @@ function runStep(step: PlanStep): number {
   } else if (step.kind === "tags-filter") {
     mkdirSync(path.dirname(step.output), { recursive: true });
     buildToTmp(step.output, (tmp) => {
-      const args = ["tags-filter", "--overwrite"];
+      // -f pbf: osmium guesses the format from the file name, and `.tmp` defeats that.
+      const args = ["tags-filter", "--overwrite", "-f", "pbf"];
       // osmium INCLUDES referenced objects by default (complete geometry). -R is
       // --omit-referenced, so only pass it when we explicitly do NOT want them.
       if (!step.addReferenced) args.push("-R");
@@ -113,14 +111,6 @@ async function sha256(file: string): Promise<string> {
   const hasher = new Bun.CryptoHasher("sha256");
   for await (const chunk of Bun.file(file).stream()) hasher.update(chunk);
   return hasher.digest("hex");
-}
-
-function fileinfo(file: string, key: string): string | null {
-  try {
-    return execFileSync("osmium", ["fileinfo", "-g", key, file]).toString().trim() || null;
-  } catch {
-    return null;
-  }
 }
 
 function readUpdateState(): any {
@@ -159,10 +149,10 @@ async function writeStatus(plan: Plan, projects: Project[], durations: Record<st
       area: p.area,
       filters: p.filters,
       pipeline: node ? buildPipeline(plan, node.id) : [],
-      // The planet's own timestamp (from update-planet.sh) is authoritative for
-      // every extract of this run; the extract's own header is only a fallback
-      // (header read, no `-e` full decode).
-      data_timestamp: state.data_timestamp ?? fileinfo(out, "header.option.osmosis_replication_timestamp") ?? null,
+      // The planet's timestamp (from update-planet.sh) holds for every extract of
+      // this run; osmium extract drops the replication header, so there is no
+      // per-file fallback.
+      data_timestamp: state.data_timestamp ?? null,
       planet_sequence_number: state.planet_sequence_number ?? null,
       update_run_at: state.update_run_at ?? null,
       extract_run_at: now,
@@ -202,7 +192,7 @@ function buildPipeline(plan: Plan, leafId: string): string[] {
 }
 
 async function main(): Promise<void> {
-  const dryRun = process.argv.includes("--dry-run") || envFlag(process.env.OSM_DRY_RUN);
+  const dryRun = process.argv.includes("--dry-run");
 
   const regions = loadRegions();
   const projects = loadProjects(regions);

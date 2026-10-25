@@ -11,7 +11,7 @@ OSM_ROOT="${OSM_ROOT:-/srv/osm}"
 PLANET_DIR="$OSM_ROOT/planet"
 PLANET="$PLANET_DIR/planet.osm.pbf"
 TMP="$PLANET_DIR/planet.osm.pbf.download"
-BASE="https://planet.openstreetmap.org/pbf/planet-latest.osm.pbf"
+BASE="https://planet.openstreetmap.org/pbf/planet-latest.osm.pbf"   # OSMF planet (worldwide)
 
 mkdir -p "$PLANET_DIR"
 
