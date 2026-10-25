@@ -258,7 +258,7 @@ A catch-all `location /` returns 404, so the rest of the volume
 
 - `Last-Modified` (from file mtime = when the extract was produced) — enables
   conditional GETs / caching.
-- `Accept-Ranges: bytes` for resumable large downloads.
+- Resumable large downloads (nginx sends `Accept-Ranges: bytes` for static files by default).
 - Long-lived files have stable URLs (see B7), so clients can cache by URL.
 
 Example server block sketch:
@@ -270,7 +270,6 @@ server {
 
     location /extracts/ {
         root /srv/osm;
-        add_header Accept-Ranges bytes;
         add_header Cache-Control "public, max-age=3600";
         # status.json next to each file carries the authoritative data-age info.
         try_files $uri =404;
@@ -354,7 +353,7 @@ Two operations on `/srv/osm/planet/planet.osm.pbf`:
 After every update we record the data's own timestamp:
 
 ```bash
-osmium fileinfo -e -g data.timestamp.last /srv/osm/planet/planet.osm.pbf
+osmium fileinfo -g header.option.osmosis_replication_timestamp /srv/osm/planet/planet.osm.pbf
 # -> the osmosis_replication_timestamp: the real "as-of" date of the OSM data
 ```
 

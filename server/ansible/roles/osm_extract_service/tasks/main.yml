@@ -1,7 +1,7 @@
 ---
 # One-time provisioning for the osm-pbf-filter-service (PLAN.md Part A).
 # After this runs, the GitHub Actions runner does everything else — except the
-# interactive runner registration, which stays manual (see the role README).
+# interactive runner registration, which stays manual (see server/ansible/README.md).
 
 - name: Install system packages
   ansible.builtin.apt:

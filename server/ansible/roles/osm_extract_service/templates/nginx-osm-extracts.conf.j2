@@ -27,7 +27,6 @@ server {
 
     location /extracts/ {
         root {{ osm_root }};
-        add_header Accept-Ranges bytes;            # resumable large downloads
         add_header Cache-Control "public, max-age=3600";
         # Last-Modified comes from the file mtime (= extract time); the sibling
         # status.json carries the authoritative data-age fields.

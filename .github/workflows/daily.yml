@@ -39,6 +39,8 @@ jobs:
         run: ./scripts/check-disk.sh        # the intermediate extracts are disk-hungry
 
       - name: Build extracts
+        env:
+          OSM_PUBLIC_BASE: ${{ vars.OSM_PUBLIC_BASE }}   # repo variable, e.g. https://<host>/extracts
         run: bun run build       # orchestrator (src/build.ts); no deps — uses Bun's native YAML
 
       - name: Clean intermediate work files

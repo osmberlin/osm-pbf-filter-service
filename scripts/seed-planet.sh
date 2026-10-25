@@ -38,4 +38,4 @@ fi
 
 echo "==> Swapping in new planet"
 mv -f "$TMP" "$PLANET"
-echo "==> Seed complete: $(osmium fileinfo -e -g data.timestamp.last "$PLANET")"
+echo "==> Seed complete: $(osmium fileinfo -g header.option.osmosis_replication_timestamp "$PLANET")"

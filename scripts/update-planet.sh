@@ -19,13 +19,14 @@ start=$SECONDS
 
 echo "==> Applying replication diffs with pyosmium-up-to-date"
 # Exit codes (see pyosmium-up-to-date(1)): 0 = fully up to date; 1 = updates
-# applied but MORE remain (the ~1 GB per-invocation download cap was hit — a
-# routine partial success after any gap, NOT an error); >1 = real error.
-# Loop on 1 so a multi-day catch-up completes in one run, bounded so a
-# persistent network error can't loop forever.
+# applied but MORE remain (the per-invocation download cap was hit); >1 = real
+# error. Every pass rewrites the whole ~87 GB planet, so raise the cap from the
+# default 1 GB to ~3 GB (a few weeks of daily diffs, held in RAM while merging):
+# a normal catch-up is then a single rewrite. The loop stays as a bounded fallback
+# for longer gaps.
 for attempt in $(seq 1 10); do
   rc=0
-  pyosmium-up-to-date --server https://planet.openstreetmap.org/replication/day "$PLANET" || rc=$?
+  pyosmium-up-to-date --size "${PYOSMIUM_MAX_MB:-3000}" --server https://planet.openstreetmap.org/replication/day "$PLANET" || rc=$?
   case "$rc" in
     0) break ;;
     1) echo "==> More diffs pending after pass $attempt (download cap reached); continuing" ;;
@@ -39,10 +40,12 @@ done
 
 duration=$(( SECONDS - start ))
 
-# The real "as-of" date of the OSM data (osmosis_replication_timestamp).
+# The real "as-of" date of the OSM data. pyosmium-up-to-date writes both values
+# into the pbf header, so read them from there — no `-e`, which would decode the
+# whole 87 GB planet on the disk shared with uMap.
 # Tolerate missing fields (|| true) so set -e doesn't abort after the update ran.
-data_timestamp="$(osmium fileinfo -e -g data.timestamp.last "$PLANET" 2>/dev/null || true)"
-seqno="$(osmium fileinfo -e -g header.option.osmosis_replication_sequence_number "$PLANET" 2>/dev/null || true)"
+data_timestamp="$(osmium fileinfo -g header.option.osmosis_replication_timestamp "$PLANET" 2>/dev/null || true)"
+seqno="$(osmium fileinfo -g header.option.osmosis_replication_sequence_number "$PLANET" 2>/dev/null || true)"
 
 # Emit proper JSON types: data_timestamp as string-or-null, sequence as number-or-null.
 jq -n \

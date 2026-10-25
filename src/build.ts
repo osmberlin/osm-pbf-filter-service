@@ -32,7 +32,8 @@ const paths: Paths = {
   work: process.env.OSM_WORK ?? path.join(ROOT, "work"),
   extracts: process.env.OSM_EXTRACTS ?? path.join(ROOT, "extracts"),
 };
-const PUBLIC_BASE = process.env.OSM_PUBLIC_BASE ?? "https://osm.example.org/extracts";
+// Set via the OSM_PUBLIC_BASE repo variable (daily.yml); an unset variable arrives as "".
+const PUBLIC_BASE = process.env.OSM_PUBLIC_BASE || "https://osm.example.org/extracts";
 
 // status.json is written next to each extract (served by nginx) AND copied into
 // the repo-relative status/ dir so commit-results.sh can commit the audit log
@@ -116,7 +117,7 @@ async function sha256(file: string): Promise<string> {
 
 function fileinfo(file: string, key: string): string | null {
   try {
-    return execFileSync("osmium", ["fileinfo", "-e", "-g", key, file]).toString().trim();
+    return execFileSync("osmium", ["fileinfo", "-g", key, file]).toString().trim() || null;
   } catch {
     return null;
   }
@@ -159,9 +160,9 @@ async function writeStatus(plan: Plan, projects: Project[], durations: Record<st
       filters: p.filters,
       pipeline: node ? buildPipeline(plan, node.id) : [],
       // The planet's own timestamp (from update-planet.sh) is authoritative for
-      // every extract of this run; per-file `osmium fileinfo -e` is only a
-      // fallback — it decodes the whole pbf, which we avoid doing N times.
-      data_timestamp: state.data_timestamp ?? fileinfo(out, "data.timestamp.last") ?? null,
+      // every extract of this run; the extract's own header is only a fallback
+      // (header read, no `-e` full decode).
+      data_timestamp: state.data_timestamp ?? fileinfo(out, "header.option.osmosis_replication_timestamp") ?? null,
       planet_sequence_number: state.planet_sequence_number ?? null,
       update_run_at: state.update_run_at ?? null,
       extract_run_at: now,

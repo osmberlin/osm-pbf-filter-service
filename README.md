@@ -19,6 +19,8 @@ installed on the community server.
   - Part A — Server provisioning (the infrastructure)
   - Part B — How the application works (data lifecycle, configs, the extractor)
   - Part C — CI/CD workflows
+- **[docs/admin-setup.md](docs/admin-setup.md)** — step-by-step setup session with
+  the server admin (server vs. GitHub steps, test, debugging).
 - **[ZUSAMMENFASSUNG.de.md](ZUSAMMENFASSUNG.de.md)** — kurze deutsche
   Zusammenfassung für die FOSSGIS-Runde.
 - **[projects/](projects/)** — one folder per project; each defines the area and
