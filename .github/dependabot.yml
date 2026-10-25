@@ -1,6 +1,6 @@
 # From the FMC tech-stack template (tilda-geo), trimmed for this repo.
 # Schedule: open-source repos → first Friday of the month, 07:00 Europe/Berlin.
-# No bun entry: the repo has zero npm dependencies and no lockfile (Bun built-ins only).
+# No pip entry: the orchestrator uses the standard library + apt python3-yaml (no lockfile).
 version: 2
 updates:
   - package-ecosystem: github-actions

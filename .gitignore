@@ -9,9 +9,8 @@ work/
 extracts/
 planet/
 
-# Bun / Node
-node_modules/
-bun.lockb.bak
+# Python
+__pycache__/
 *.log
 
 # OS / editor

@@ -15,16 +15,16 @@ log into the server for normal operation.
 
 `roles/osm_extract_service/` (see [tasks/main.yml](roles/osm_extract_service/tasks/main.yml)):
 
-1. installs system packages (`osmium-tool`, `nginx`, `git`, `jq`, `python3*`);
+1. installs system packages (`osmium-tool`, `nginx`, `git`, `jq`, `python3*`,
+   `python3-yaml` for the Python orchestrator);
 2. creates a pyosmium virtualenv and links `pyosmium-up-to-date` onto PATH;
 3. creates the unprivileged runner user (`osmrunner`);
 4. creates `/srv/osm/{planet,work,extracts}` owned by that user;
-5. installs a **pinned** Bun (idempotent);
-6. installs + enables the nginx site (HTTP; certbot adds TLS) and reloads nginx
+5. installs + enables the nginx site (HTTP; certbot adds TLS) and reloads nginx
    only after `nginx -t` passes.
 
 Variables are in [defaults/main.yml](roles/osm_extract_service/defaults/main.yml)
-(host, runner user, Bun version, paths). Override per inventory.
+(host, runner user, paths, packages). Override per inventory.
 
 ## Run (standalone example)
 

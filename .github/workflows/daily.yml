@@ -39,7 +39,7 @@ jobs:
         run: ./scripts/check-disk.sh        # the intermediate extracts are disk-hungry
 
       - name: Build extracts
-        run: bun run build       # orchestrator (src/build.ts); no deps — uses Bun's native YAML
+        run: python3 -m extractor   # orchestrator (extractor/); stdlib + apt python3-yaml
 
       - name: Clean intermediate work files
         if: always()             # even on failure — intermediates are tens of GB on the shared disk

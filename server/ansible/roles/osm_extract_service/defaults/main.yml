@@ -8,9 +8,6 @@ osm_root: /srv/osm
 osm_runner_user: osmrunner
 osm_runner_home: "/home/{{ osm_runner_user }}"
 
-# Pinned Bun version (orchestrator runtime). Bump deliberately.
-osm_bun_version: "1.3.13"
-
 # Public hostname for the download server (nginx server_name).
 osm_download_hostname: osm.example.org
 
@@ -28,3 +25,4 @@ osm_system_packages:
   - python3
   - python3-venv
   - python3-pip
+  - python3-yaml   # the only orchestrator dependency (extractor/config.py)

@@ -8,8 +8,8 @@ The design goal is **minimal manual server work**: configuration lives in this
 git repository, and all orchestration runs through CI on a self-hosted runner
 installed on the community server.
 
-> **Status: pre-alpha.** The planning logic in `src/` is implemented and
-> unit-tested (`bun run test`, run in CI on GitHub-hosted runners). The osmium
+> **Status: pre-alpha.** The orchestrator in `extractor/` (Python) is implemented
+> and unit-tested (`python3 -m unittest`, run in CI on GitHub-hosted runners). The osmium
 > **execution** path (`scripts/`, `server/`, runner workflows) exists but has not
 > been run on the server yet. A local end-to-end run works (see below); only the
 > Neukölln test polygon is committed so far.
@@ -32,7 +32,7 @@ installed on the community server.
 ## How it works in one paragraph
 
 Each project declares an **area** (a region from the hierarchy or a custom
-polygon) and a set of **tag filters** (osmium syntax). A Bun orchestrator reads
+polygon) and a set of **tag filters** (osmium syntax). A Python orchestrator reads
 all project configs, figures out which continents/countries are actually needed,
 computes the **union of tags** required at each level, and runs `osmium` from the
 top down (world → continent → country → project) so every intermediate extract is
@@ -41,12 +41,15 @@ each file describing how old the data is.
 
 ## Local end-to-end test
 
+Needs Python 3.11+ with PyYAML and `osmium` on PATH. To keep your system Python
+untouched, run it through a throwaway environment, e.g.
+`OSM_ROOT=/tmp/osm uv run --no-project --with pyyaml python -m extractor`.
 Any `.osm.pbf` can stand in for the planet, e.g. a Geofabrik Berlin extract for
 the `test-neukoelln` project:
 
 ```bash
 mkdir -p /tmp/osm/planet && ln -s ~/Downloads/berlin-latest.osm.pbf /tmp/osm/planet/planet.osm.pbf
-OSM_ROOT=/tmp/osm bun run build   # -> /tmp/osm/extracts/test-neukoelln/latest.osm.pbf
+OSM_ROOT=/tmp/osm python3 -m extractor   # -> /tmp/osm/extracts/test-neukoelln/latest.osm.pbf
 ```
 
 This writes `plan.json` and `status/` into the repo; don't commit them from a

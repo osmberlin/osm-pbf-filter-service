@@ -11,7 +11,7 @@ with the server admin. Each step says **where** it happens (server or GitHub) an
 - **One directory** `/srv/osm/` (planet ~87 GB, `work/` for temporary files, `extracts/` for the served results).
 - **One systemd service**: the GitHub Actions runner. It only connects *outbound* to GitHub. No inbound port.
 - **One nginx site** that serves `/srv/osm/extracts/` read-only at `https://<host>/extracts/…`.
-- **Packages**: `osmium-tool`, `jq`, `git`, `curl`, `python3-venv`, plus pyosmium in `/opt/pyosmium` and a pinned Bun.
+- **Packages** (all apt, except pyosmium in a venv under `/opt/pyosmium`): `osmium-tool`, `jq`, `git`, `curl`, `python3`, `python3-venv`, `python3-yaml`. The orchestrator is plain Python, no extra runtime.
 - **Load**: one nightly job. It updates the planet (one rewrite of the 87 GB file) and cuts the extracts. The load is mostly disk I/O. A disk guard aborts the job when less than 120 GB is free.
 
 Nothing else changes on the server. After the setup there is no routine admin work.
@@ -21,7 +21,7 @@ Nothing else changes on the server. After the setup there is no routine admin wo
 | # | Where | Who | Step |
 |---|---|---|---|
 | 0.1 | — | us | Agree on the **download hostname**, e.g. `osm-extracts.<umap-domain>`, and who sets the DNS record. |
-| 0.2 | — | admin | Confirm the **free disk** (we need ≥ 300 GB on the volume holding `/srv/osm`, SSD preferred) and the RAM. |
+| 0.2 | — | admin | Confirm **Python ≥ 3.11** (`python3 --version`; Debian 12 and Ubuntu 24.04 ship it) and the **free disk** (we need ≥ 300 GB on the volume holding `/srv/osm`, SSD preferred) and the RAM. |
 | 0.3 | — | admin | Decide whether to **fold the Ansible role into the FOSSGIS playbooks** or run it standalone once. |
 
 ## Part 1 — Server (admin, ~30 min)
@@ -29,7 +29,7 @@ Nothing else changes on the server. After the setup there is no routine admin wo
 | # | Step | Check it worked |
 |---|---|---|
 | 1.1 | Set `osm_download_hostname` (and `osm_root` if not `/srv/osm`) in the inventory. | — |
-| 1.2 | Run the role: `cd server/ansible && ansible-playbook -i <inventory> playbook.example.yml` | `id osmrunner`; `ls -ld /srv/osm/*` is owned by osmrunner; `osmium --version`; `pyosmium-up-to-date --help`; `bun --version` |
+| 1.2 | Run the role: `cd server/ansible && ansible-playbook -i <inventory> playbook.example.yml` | `id osmrunner`; `ls -ld /srv/osm/*` is owned by osmrunner; `osmium --version`; `pyosmium-up-to-date --help`; `python3 -c "import yaml"` |
 | 1.3 | Point DNS at the server, then add TLS: `certbot --nginx -d <hostname>` | `curl -I https://<hostname>/extracts/` returns 404 (that's expected: the folder is empty and there is no autoindex) |
 | 1.4 | Register the runner as `osmrunner`. Get the token in step 2.1, then follow [server/ansible/README.md → Manual follow-up](../server/ansible/README.md#manual-follow-up-not-in-the-role). Use label **`osm`**. | `sudo ./svc.sh status` shows the service as active; GitHub shows the runner as "Idle" |
 
@@ -41,7 +41,7 @@ Repo: https://github.com/osmberlin/osm-pbf-filter-service
 |---|---|
 | 2.1 | **Settings → Actions → Runners → New self-hosted runner**: copy the one-time token for step 1.4. |
 | 2.2 | **Settings → Actions → General → Fork pull request workflows**: set "Require approval for all outside collaborators". This is mandatory, because the repo is public and the runner sits on a shared server (PLAN.md §A3). |
-| 2.3 | Put the agreed hostname in the code: `PUBLIC_BASE` in `src/build.ts` and `osm_download_hostname` in the Ansible inventory. No GitHub variables or secrets are needed. |
+| 2.3 | Put the agreed hostname in the code: `PUBLIC_BASE` in `extractor/build.py` and `osm_download_hostname` in the Ansible inventory. No GitHub variables or secrets are needed. |
 | 2.4 | **Actions → seed-planet → Run workflow**, type `reseed`. This downloads the 87 GB planet and checks its md5. It takes a few hours, and the session doesn't need to wait for it. |
 
 ## Part 3 — Test (us, after the seed finishes)

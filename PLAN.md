@@ -33,7 +33,7 @@ agent itself.
 | CI platform | **GitHub Actions** with a **self-hosted runner** on the community server. |
 | Extract storage / serving | **nginx** static file server on the community server. Stable URLs + real HTTP headers. **Binaries are not committed to git** — only configs + resolved plan + `status.json` are. |
 | Region hierarchy | **Static tree** (world → continents → countries) defined in [`regions/regions.yaml`](regions/regions.yaml). Continents/countries are **activated** only when a project needs them. Only **tag filtering is dynamic** (union per active node). |
-| Orchestrator language | **Bun** (TypeScript). |
+| Orchestrator language | **Python 3** (standard library + PyYAML from apt). Python is on the server anyway for pyosmium. |
 | Extract tool | **osmium-tool** (`osmium extract`, `osmium tags-filter`); **pyosmium** for updates. |
 | Server | **FOSSGIS e.V. uMap instance at Hetzner**, ~585 GB disk (see §3 / §A1). Shared with uMap. |
 | Repo visibility | **Public** — makes the runner hardening in §A3 mandatory. |
@@ -89,7 +89,7 @@ flowchart TD
 
   subgraph SRV["Community server (self-hosted runner)"]
     PLANET[("planet.osm.pbf<br/>daily-updated")]
-    ORCH["Bun orchestrator + osmium"]
+    ORCH["Python orchestrator + osmium"]
     OUT["/srv/osm/extracts<br/>*.osm.pbf + status.json"]
     NGINX["nginx (static)"]
   end
@@ -155,11 +155,10 @@ The role ([tasks](server/ansible/roles/osm_extract_service/tasks/main.yml)):
 
 | Step | Purpose |
 |---|---|
-| apt packages: `osmium-tool`, `nginx`, `git`, `jq`, `python3*` | extract/serve/diff toolchain |
+| apt packages: `osmium-tool`, `nginx`, `git`, `jq`, `python3*`, `python3-yaml` | extract/serve/diff toolchain + orchestrator |
 | pyosmium venv + `pyosmium-up-to-date` on PATH | apply daily replication diffs |
 | unprivileged `osmrunner` user | the runner + pipeline run as non-root |
 | `/srv/osm/{planet,work,extracts}` | data + work + web root (A4) |
-| pinned `bun` | run the orchestrator |
 | nginx site ([template](server/ansible/roles/osm_extract_service/templates/nginx-osm-extracts.conf.j2)) | serve extracts; reload only after `nginx -t` |
 
 The GitHub Actions **runner registration** is interactive (a one-time token) and
@@ -404,11 +403,11 @@ Resolving a project to a chain:
   country, if one is defined) by **bounding-box overlap**, with an optional
   explicit `area.region` override to pin it.
 
-## B4. The orchestrator (Bun)
+## B4. The orchestrator (Python)
 
-Implemented under [`src/`](src/build.ts): [build.ts](src/build.ts) (entry),
-[config.ts](src/config.ts) (load + validate), [geojson.ts](src/geojson.ts),
-[tags.ts](src/tags.ts) (tag union), [plan.ts](src/plan.ts) (DAG + steps). Pure
+Implemented in [`extractor/`](extractor/build.py): [build.py](extractor/build.py) (entry),
+[config.py](extractor/config.py) (load + validate), [geojson.py](extractor/geojson.py),
+[tags.py](extractor/tags.py) (tag union), [plan.py](extractor/plan.py) (DAG + steps). Pure
 planning + shelling out to `osmium`. Steps:
 
 **1. Load & validate** all `projects/*/config.yaml` + `regions/regions.yaml` and
@@ -494,12 +493,13 @@ plus a line in the run summary (§C1). Optional toggle: also exit non-zero so th
 job is marked failed when any input was invalid.
 
 **Implementation status (pre-alpha).** The planning logic is implemented and
-unit-tested with Bun's built-in test runner (`bun test`): `src/geojson.ts` (polygon validation +
-bbox), `src/tags.ts` (filter parsing + the union algorithm), `src/plan.ts`
-(chain resolution, activation, per-node union, ordered osmium steps), with
-`src/config.ts` (load/validate) and `src/build.ts` (executor) on top. `bun run
-build --dry-run` emits `plan.json` without invoking osmium. The osmium execution
-path itself has **not been run end-to-end** yet.
+unit-tested with Python's built-in `unittest` (`python3 -m unittest`):
+`extractor/geojson.py` (polygon validation), `extractor/tags.py` (filter parsing +
+the union algorithm), `extractor/plan.py` (chain resolution, activation, per-node
+union, ordered osmium steps), with `extractor/config.py` (load/validate) and
+`extractor/build.py` (executor) on top. `python3 -m extractor --dry-run` emits
+`plan.json` without invoking osmium. The full osmium path has run end-to-end
+**locally** (Berlin extract as planet, `test-neukoelln` project), not yet on the server.
 
 ## B5. Output, status files, HTTP headers
 
@@ -669,7 +669,7 @@ jobs:
       - name: Update planet
         run: ./scripts/update-planet.sh
       - name: Build extracts
-        run: bun run build           # the orchestrator
+        run: python3 -m extractor    # the orchestrator
       - name: Commit resolved plan + status
         run: ./scripts/commit-results.sh
 ```
@@ -716,27 +716,26 @@ end-to-end**.
   - [spieli/config.yaml](projects/spieli/config.yaml) — **real** (playground POIs, Hessen)
   - [osm-boundary-checker-germany/config.yaml](projects/osm-boundary-checker-germany/config.yaml) — **real** (admin + postal-code boundaries, Germany)
 - [regions/regions.yaml](regions/regions.yaml) — the static hierarchy ([README](regions/README.md))
-  - [regions/polygons/](regions/polygons/README.md) — GeoJSON Polygon/MultiPolygon shapes (sources documented; not committed yet)
+  - [regions/polygons/](regions/polygons/README.md) — GeoJSON Polygon/MultiPolygon shapes (only the Neukölln test polygon is committed so far)
 
-**Orchestrator — Bun, pre-alpha** (`bun run build`; `bun run build --dry-run` plans only)
-- [src/build.ts](src/build.ts) — entry point: load → plan → write `plan.json` → run osmium → write status files
-- [src/config.ts](src/config.ts) — load + fail-soft validate region/project configs (IO; Bun's native YAML)
-- [src/geojson.ts](src/geojson.ts) — pure GeoJSON polygon validation + bounding boxes
-- [src/tags.ts](src/tags.ts) — pure osmium tags-filter parsing + per-node **tag union**
-- [src/plan.ts](src/plan.ts) — pure planning: region chains, active-region selection, ordered osmium steps
-- [src/github.ts](src/github.ts) — Actions error/warning annotations + step summary
-- [src/types.ts](src/types.ts) — shared, dependency-free types
-- Tests (bun test): [test/geojson.test.ts](test/geojson.test.ts) · [test/tags.test.ts](test/tags.test.ts) · [test/plan.test.ts](test/plan.test.ts) · [test/types.test.ts](test/types.test.ts)
-- [package.json](package.json) — `build` + `test` scripts (zero dependencies — Bun's built-in test runner and native YAML support cover everything)
+**Orchestrator — Python, pre-alpha** (`python3 -m extractor`; `--dry-run` plans only)
+- [extractor/build.py](extractor/build.py) — entry point: load → plan → write `plan.json` → run osmium → write status files
+- [extractor/config.py](extractor/config.py) — load + fail-soft validate region/project configs (IO; PyYAML)
+- [extractor/geojson.py](extractor/geojson.py) — pure GeoJSON polygon validation
+- [extractor/tags.py](extractor/tags.py) — pure osmium tags-filter parsing + per-node **tag union**
+- [extractor/plan.py](extractor/plan.py) — pure planning: region chains, active-region selection, ordered osmium steps
+- [extractor/github.py](extractor/github.py) — Actions error/warning annotations + step summary
+- [extractor/types.py](extractor/types.py) — shared data types + id validation
+- Tests (`python3 -m unittest`, standard library only): [tests/](tests/)
 
 **Server provisioning** (Part A) — Ansible role [server/ansible/](server/ansible/README.md)
-- [roles/osm_extract_service/tasks/main.yml](server/ansible/roles/osm_extract_service/tasks/main.yml) — packages, user, dirs, bun, nginx
-- [.../defaults/main.yml](server/ansible/roles/osm_extract_service/defaults/main.yml) — variables (host, paths, bun version)
+- [roles/osm_extract_service/tasks/main.yml](server/ansible/roles/osm_extract_service/tasks/main.yml) — packages, user, dirs, nginx
+- [.../defaults/main.yml](server/ansible/roles/osm_extract_service/defaults/main.yml) — variables (host, paths, packages)
 - [.../templates/nginx-osm-extracts.conf.j2](server/ansible/roles/osm_extract_service/templates/nginx-osm-extracts.conf.j2) — static download host
 - [playbook.example.yml](server/ansible/playbook.example.yml) · [inventory.example.ini](server/ansible/inventory.example.ini)
 
 **CI/CD** (Part C)
-- [.github/workflows/ci.yml](.github/workflows/ci.yml) — tests (bun test) on **GitHub-hosted** runners (never self-hosted)
+- [.github/workflows/ci.yml](.github/workflows/ci.yml) — tests (`python3 -m unittest`) on **GitHub-hosted** runners (never self-hosted)
 - [.github/workflows/daily.yml](.github/workflows/daily.yml) — update + extract + commit (self-hosted)
 - [.github/workflows/seed-planet.yml](.github/workflows/seed-planet.yml) — manual full re-download
 - Scripts: [update-planet.sh](scripts/update-planet.sh) · [seed-planet.sh](scripts/seed-planet.sh) · [commit-results.sh](scripts/commit-results.sh) · [check-disk.sh](scripts/check-disk.sh)

@@ -19,7 +19,7 @@ Ausführung über **GitHub Actions auf einem self-hosted Runner**. Ziel ist
 1. **Täglich:** Die weltweite Datei (`planet.osm.pbf`, ~87 GB) wird per
    `pyosmium-up-to-date` mit den OSMF-Diffs aktualisiert. Ein **Neu-Download**
    läuft nur manuell auf Knopfdruck.
-2. **Danach:** Ein Bun-Skript liest alle Projekt-Konfigurationen, ermittelt
+2. **Danach:** Ein Python-Skript liest alle Projekt-Konfigurationen, ermittelt
    welche Kontinente/Länder überhaupt gebraucht werden, und berechnet pro Ebene
    die **Vereinigung der benötigten Tags**. So wird von oben nach unten
    extrahiert (`Welt → Kontinent → Land → Projekt`) und jede Zwischenstufe bleibt
