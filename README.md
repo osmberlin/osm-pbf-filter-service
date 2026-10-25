@@ -29,6 +29,22 @@ installed on the community server.
 - **[regions/](regions/)** — the static region hierarchy (world → continents →
   countries) used to speed up extraction. See [regions/README.md](regions/README.md).
 
+## GitHub repository settings (done 2026-10-25)
+
+The repo is public, and a nightly job may run on a machine we control, so code
+from strangers must never run there. Set in the GitHub UI:
+
+- **Settings → General → Features → Pull requests → "Creation allowed by:
+  Collaborators only".** Outsiders can read PRs but can't open them, which also
+  closes the "PR brings its own workflow file" path. Outside projects submit
+  their config via an issue, or get added as collaborators.
+- **Settings → Actions → General → "Approval for running fork pull request
+  workflows from contributors" → "Require approval for all external
+  contributors".** Second safeguard in case PRs are opened up again later.
+
+Anyone with write access can change workflows, so keep the collaborator list to
+people you'd also trust on the server.
+
 ## How it works in one paragraph
 
 Each project declares an **area** (a region from the hierarchy or a custom

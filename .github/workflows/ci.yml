@@ -1,10 +1,9 @@
 # Unit tests for the orchestrator logic. Runs on GitHub-hosted runners — NEVER
 # the self-hosted runner — so fork PRs can't execute on the server (PLAN.md §A3).
 #
-# Fork PRs still run PR-authored test code here (on a throwaway GitHub-hosted VM
-# with a read-only token). REQUIRED repo setting to gate that:
-#   Settings -> Actions -> General -> Fork pull request workflows ->
-#   "Require approval for all outside collaborators" (or stricter).
+# Repo settings gate PR code (done 2026-10-25, see README "GitHub repository
+# settings"): only collaborators can open PRs, and fork PR workflows need
+# approval for all external contributors.
 name: ci
 
 on:

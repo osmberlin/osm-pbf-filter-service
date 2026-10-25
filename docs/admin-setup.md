@@ -40,7 +40,7 @@ Repo: https://github.com/osmberlin/osm-pbf-filter-service
 | # | Step |
 |---|---|
 | 2.1 | **Settings → Actions → Runners → New self-hosted runner**: copy the one-time token for step 1.4. |
-| 2.2 | **Settings → Actions → General → Fork pull request workflows**: set "Require approval for all outside collaborators". This is mandatory, because the repo is public and the runner sits on a shared server (PLAN.md §A3). |
+| 2.2 | ✅ Done 2026-10-25: PR creation limited to collaborators, and fork PR workflows need approval for all external contributors. See [README → GitHub repository settings](../README.md#github-repository-settings-done-2026-10-25). |
 | 2.3 | Put the agreed hostname in the code: `PUBLIC_BASE` in `extractor/build.py` and `osm_download_hostname` in the Ansible inventory. No GitHub variables or secrets are needed. |
 | 2.4 | **Actions → seed-planet → Run workflow**, type `reseed`. This downloads the 87 GB planet and checks its md5. It takes a few hours, and the session doesn't need to wait for it. |
 

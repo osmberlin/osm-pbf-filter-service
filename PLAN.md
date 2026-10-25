@@ -183,8 +183,9 @@ can open a pull request that would otherwise run code on the box.
   compromised job can't reach uMap's data.
 
 **Never run untrusted PR code**
-- Settings → Actions → General → **Fork pull request workflows → Require approval
-  for all outside collaborators**.
+- ✅ Done 2026-10-25 (see [README](README.md#github-repository-settings-done-2026-10-25)):
+  **pull requests can only be opened by collaborators**, and **fork PR workflows
+  require approval for all external contributors**.
 - Gate the pipeline workflows to safe triggers only: `push` to `main`,
   `schedule`, `workflow_dispatch` — **never** `pull_request` from forks.
 - Run any PR-validation (e.g. config linting) on **GitHub-hosted** runners, not
