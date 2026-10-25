@@ -4,12 +4,18 @@ One-time provisioning for the osm-pbf-filter-service host (PLAN.md Part A). Afte
 this runs, the GitHub Actions runner does everything else; you shouldn't need to
 log into the server for normal operation.
 
-> **Align with FOSSGIS.** The server is part of the FOSSGIS fleet (managed
-> centrally; infra docs/playbooks live in the FOSSGIS GitLab). The expectation is
-> to **fold the `osm_extract_service` role into the FOSSGIS setup**, matching their
-> inventory/var conventions — not to run this standalone. The files here are a
-> complete, reviewable reference of what the role must do; the exact placement is
-> to be agreed with Lars Lingner / the FOSSGIS admins.
+> **Paused (2026-10-25).** The uMap server setup is on hold. First we prove the
+> pipeline works for a small area (Berlin/Germany) on rented-by-the-hour compute
+> with S3 for the files. This role stays here as a reference for later.
+
+> **Agreed with the FOSSGIS admin (2026-10-25).** When this comes back, it does
+> **not** hook into the uMap role or its tasks. It gets its **own Ansible role /
+> task setup** in the FOSSGIS repo. It may use the same shared services that the
+> server already has (e.g. nginx), but keeps its **own folders and its own users**,
+> separate from uMap.
+>
+> FOSSGIS Ansible repo (access needed, ask the FOSSGIS admins), uMap role for
+> reference: <https://gitlab.fossgis.de/osm-server/ansible_openstreetmap.de/-/blob/master/roles/umap/tasks/main.yml?ref_type=heads>
 
 ## What the role does
 

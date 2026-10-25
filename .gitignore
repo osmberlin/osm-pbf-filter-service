@@ -17,3 +17,6 @@ __pycache__/
 .DS_Store
 .idea/
 .vscode/
+
+# Private notes, never committed
+notes.local/
