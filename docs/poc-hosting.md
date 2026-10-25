@@ -1,11 +1,22 @@
-# Proof of concept: hosting without our own server
+# Hosting: research and decision
 
-> **Status:** research + proposal, 2026-10-25. Replaces the uMap-server plan for
-> now (paused, see [server/ansible/README.md](../server/ansible/README.md)).
-> Prices excl. VAT, fetched from official pricing pages on 2026-10-25. Re-check
-> before committing money.
+> **Decision (2026-10-25): our own Hetzner Cloud CX43, always on, with nginx
+> serving the extracts and Geofabrik continent extracts as input (Europe first).**
+> 8 vCPU, 16 GB RAM, 160 GB NVMe, about **€16/month plus €0.50/month for the
+> IPv4 address**, Debian 12, our Ansible role, self-hosted GitHub Actions runner.
+> No S3. Hourly servers, GitHub-hosted runners and S3 storage were considered
+> (tables below, kept as background); the always-on box won on simplicity: the
+> sources stay on disk, daily diffs are cheap, and the setup has the same shape as
+> the paused FOSSGIS server, so moving later is mostly an inventory change. The
+> shared uMap server variant is paused (see
+> [server/ansible/README.md](../server/ansible/README.md)). Current design:
+> [PLAN.md](../PLAN.md).
+>
+> The text below is the original research and proposal (a proof of concept without
+> a permanent server). Prices excl. VAT, fetched from official pricing pages on
+> 2026-10-25. Re-check before committing money.
 
-## Goal
+## Goal (original)
 
 Show that the pipeline works and is useful, first for a **small area (Berlin or
 Germany)**, without a permanently running server:
@@ -89,7 +100,7 @@ Releases also works as free hosting for a demo (files under 2 GiB,
 `…/releases/latest/download/<file>`), but heavy automated downloads risk GitHub's
 "excessive bandwidth" rule, and there's no custom domain.
 
-## Proposal
+## Proposal (superseded by the decision above)
 
 1. **PoC now: Option 1 + Cloudflare R2, area Germany (start with Berlin).** Cost
    €0. Setup: a Cloudflare account, one bucket, one bucket-scoped token stored as

@@ -1,15 +1,22 @@
 # Plan: OSM PBF filter & extract service
 
-> Working design for discussion. Nothing here is implemented yet — this document
-> plus the example configs in [`projects/`](projects/) and [`regions/`](regions/)
-> are the whole repo today.
+> **Status (2026-10-25).** Decided: we run on **our own Hetzner Cloud CX43**
+> (8 vCPU, 16 GB RAM, 160 GB NVMe, ~€16/month, always on, Debian 12) with our
+> Ansible role, a self-hosted GitHub Actions runner and **nginx on the server**
+> serving the extracts (no S3). Input is **Geofabrik continent extracts**
+> ("sources", currently only Europe), kept on disk and updated with Geofabrik's
+> daily diffs. The shared FOSSGIS uMap server variant is **paused**
+> (§A9). Why this and not the alternatives: [docs/poc-hosting.md](docs/poc-hosting.md).
+> The pipeline is implemented and tested locally (Germany as a Europe stand-in:
+> 5 projects, 12 osmium steps, ~8.5 min, 5.3 GB peak RAM); it has not run on the
+> server yet.
 
 ## 1. Goal
 
-Run a service on a **community OSM server** that:
+Run a service that:
 
-1. Keeps a full-planet OpenStreetMap `.osm.pbf` file **updated daily** from the
-   OSMF replication diffs.
+1. Keeps **Geofabrik continent extracts** (OpenStreetMap `.osm.pbf`) on disk and
+   **updated daily** from Geofabrik's daily diffs.
 2. Produces, **once per day**, a set of small **per-project extracts** — each
    filtered by **area** (a polygon) and by **tags** (osmium key/key=value
    filters).
@@ -19,10 +26,9 @@ Run a service on a **community OSM server** that:
    and the rest happens automatically — with **as little manual server access as
    possible**.
 
-The chosen way to achieve point 4 is to register the community server as a
-**self-hosted GitHub Actions runner**. All logic then lives in workflow YAML +
-scripts in this repo; the only thing that runs "on the server" is the runner
-agent itself.
+The chosen way to achieve point 4 is a **self-hosted GitHub Actions runner** on
+the server. All logic lives in workflow YAML + the Python orchestrator in this
+repo; the only thing that runs "on the server" is the runner agent itself.
 
 ---
 
@@ -30,12 +36,14 @@ agent itself.
 
 | Topic | Decision |
 |---|---|
-| CI platform | **GitHub Actions** with a **self-hosted runner** on the community server. |
-| Extract storage / serving | **nginx** static file server on the community server. Stable URLs + real HTTP headers. **Binaries are not committed to git** — only configs + resolved plan + `status.json` are. |
-| Region hierarchy | **Static tree** (world → continents → countries) defined in [`regions/regions.yaml`](regions/regions.yaml). Continents/countries are **activated** only when a project needs them. Only **tag filtering is dynamic** (union per active node). |
+| CI platform | **GitHub Actions** with a **self-hosted runner** on our server. |
+| Server | **Own Hetzner Cloud CX43**, always on, Debian 12 (§3, §A1). Same shape as the paused FOSSGIS setup, so moving later is mostly an inventory change. |
+| Input | **Geofabrik continent extracts** ("sources"), kept on disk, updated with Geofabrik's **daily diffs** via pyosmium. Only **Europe** is active; the other continents are listed (commented) in [`regions/regions.yaml`](regions/regions.yaml). |
+| Extract storage / serving | **nginx** on the server. Stable URLs + real HTTP headers. **No S3.** **Binaries are not committed to git** — only configs + resolved plan + `status.json` are. |
+| Region hierarchy | **Static tree**: sources (continents) at the top, regions below them, defined in `regions/regions.yaml`. Sources and regions are **activated** only when a project needs them. Only **tag filtering is dynamic** (union per active node). |
+| World projects | `area: {region: world}`: filtered from every source, then merged (§B3). |
 | Orchestrator language | **Python 3** (standard library + PyYAML from apt). Python is on the server anyway for pyosmium. |
-| Extract tool | **osmium-tool** (`osmium extract`, `osmium tags-filter`); **pyosmium** for updates. |
-| Server | **FOSSGIS e.V. uMap instance at Hetzner**, ~585 GB disk (see §3 / §A1). Shared with uMap. |
+| Extract tool | **osmium-tool** (`osmium extract`, `tags-filter`, `merge`, `time-filter`); **pyosmium** for updates. |
 | Repo visibility | **Public** — makes the runner hardening in §A3 mandatory. |
 | Doc language | English. |
 
@@ -43,36 +51,27 @@ agent itself.
 
 ## 3. Target environment
 
-### Known facts
-
-- **Planet size: ~87 GB.** `planet-latest.osm.pbf` is **87 GB** (compressed) —
-  source: [planet.openstreetmap.org](https://planet.openstreetmap.org/). All
-  sizing below uses this figure (and it grows over time).
-- **Server: the FOSSGIS e.V. uMap instance, hosted at Hetzner.**
-  - **Disk: ~585 GB.**
-  - Hosted at **Hetzner**; **shared** with the uMap service (we are a tenant on
-    an existing box, not a fresh server).
-  - Maintained by **Lars Lingner** and the FOSSGIS OSM-server admin group; setup
-    scripts live under the FOSSGIS GitHub account, and detailed server docs are
-    in the FOSSGIS GitLab.
-  - Sources:
-    [Förderantrag uMap-Instanz](https://www.fossgis.de/wiki/F%C3%B6rderantr%C3%A4ge/umap_instanz),
-    [FOSSGIS IT-Technik](https://www.fossgis.de/wiki/IT-Technik),
-    [Benutzer:Lars Lingner](https://www.fossgis.de/wiki/Benutzer:Lars_Lingner),
-    [OSM wiki: FOSSGIS/Server](https://wiki.openstreetmap.org/wiki/FOSSGIS/Server).
+- **Server:** Hetzner Cloud **CX43** — 8 shared vCPU, 16 GB RAM, 160 GB NVMe,
+  about €16/month plus €0.50/month for the IPv4 address, always on. Debian 12.
+  Cost comparison with hourly servers, GitHub-hosted runners and S3 options (all
+  considered, none chosen): [docs/poc-hosting.md](docs/poc-hosting.md).
+- **Disk:** 160 GB. Europe is ~35 GB; sources are processed one after another
+  with cleanup in between, so the box can grow to all continents (~85 GB of
+  source files in total) as long as intermediates of one continent fit next to
+  them. The disk guard refuses to run below 50 GB free (§A6).
+- **RAM:** measured 5.3 GB peak with Germany as the input; 16 GB is the headroom
+  for Europe (to be measured on the server).
 - **Repo visibility: public.** This makes the self-hosted-runner hardening in
-  §A3 **mandatory, not optional**.
+  §A3 **mandatory, not optional**. The GitHub repo settings are done (see
+  [README](README.md#github-repository-settings-done-2026-10-25)).
 
 ### Still to confirm
 
-- **CPU / RAM and disk type** of the uMap server — not publicly documented; check
-  the FOSSGIS GitLab or ask Lars Lingner. osmium is I/O-heavy, so SSD vs HDD is
-  the single biggest speed factor.
-- **Public download host + TLS** — which domain serves the extracts and who
-  manages DNS/cert (the uMap instance already has a hostname we may be able to
-  reuse, e.g. a subdomain).
-- **OSMF diff timing** — what time daily replication diffs are reliably available
-  (drives the cron in §C2).
+- **Public download host + TLS** — which domain serves the extracts, DNS, cert.
+  `PUBLIC_BASE` in [extractor/build.py](extractor/build.py) is still a placeholder.
+- **Europe on the real box** — runtime and peak RAM of the first full run.
+- **Russia / Asia coverage** — check where Geofabrik puts Russia before enabling
+  more continents.
 - **Runner `sudo` scope** — is the runner allowed a single
   `systemctl reload nginx` (only needed for custom data-age headers, §B5)?
 
@@ -87,16 +86,17 @@ flowchart TD
     WF["Actions workflows"]
   end
 
-  subgraph SRV["Community server (self-hosted runner)"]
-    PLANET[("planet.osm.pbf<br/>daily-updated")]
+  subgraph SRV["Hetzner CX43 (self-hosted runner)"]
+    SRC[("sources/*.osm.pbf<br/>Geofabrik continents,<br/>daily diffs applied")]
     ORCH["Python orchestrator + osmium"]
     OUT["/srv/osm/extracts<br/>*.osm.pbf + status.json"]
     NGINX["nginx (static)"]
   end
 
+  GEO["Geofabrik<br/>downloads + daily diffs"] --> SRC
   WF -. "jobs run on" .-> SRV
   REPO -- "read configs" --> ORCH
-  PLANET --> ORCH
+  SRC --> ORCH
   ORCH --> OUT
   OUT --> NGINX
   NGINX -- "public download URLs" --> USERS["Project users"]
@@ -105,7 +105,7 @@ flowchart TD
 
 Two halves, covered separately below:
 
-- **Part A — Server provisioning** (the infrastructure you said you don't know).
+- **Part A — Server provisioning** (the infrastructure).
 - **Part B — How the application works** (data + extraction logic).
 - **Part C — CI/CD workflows** (the glue that runs B on A).
 
@@ -115,63 +115,52 @@ Two halves, covered separately below:
 
 The whole point: do this **once**, then never touch the server again for normal
 operation. Provisioning is an **Ansible role** ([`server/ansible/`](server/ansible/README.md))
-so it's reproducible and fits the FOSSGIS fleet (see A2).
+so it's reproducible. Step-by-step setup: [docs/server-setup.md](docs/server-setup.md).
 
-## A1. The server (FOSSGIS uMap instance) & disk budget
+## A1. The server & disk budget
 
-This runs on the existing **FOSSGIS e.V. uMap server at Hetzner** (sources in §3),
-**shared** with the uMap service. Known: **~585 GB disk**; CPU/RAM/disk-type to be
-confirmed via the FOSSGIS GitLab or Lars Lingner.
-
-Disk budget against the **87 GB** planet:
+Our own **Hetzner CX43** (§3), nothing else runs on it. Disk budget:
 
 | Item | Approx. size |
 |---|---|
-| `planet.osm.pbf` (live) | ~87 GB |
-| Re-seed headroom (old + new planet during atomic swap) | up to ~87 GB extra |
-| Intermediate extracts in `work/` (e.g. Europe ≈ 30 GB) | tens of GB, transient |
+| Europe source (live) | ~35 GB |
+| Update headroom (pyosmium rewrites the whole file; old + new coexist) | up to ~35 GB extra |
+| Intermediate files in `work/` (regions, tag-filtered files of one source) | tens of GB, transient, cleaned after each source |
 | Final per-project extracts in `extracts/` | small–moderate, persistent |
-| **Plus whatever uMap already uses on the same disk** | unknown — confirm |
 
-→ **585 GB is comfortable for normal daily operation.** The tightest moment is a
-**re-seed** (briefly ~2× planet ≈ 174 GB) on top of uMap's existing usage — so
-confirm free space before the first re-seed, and have the daily workflow **guard
-on free disk** (§A6).
-
-- **OS / disk type:** Hetzner default (Ubuntu/Debian assumed); SSD vs HDD is the
-  biggest osmium speed factor — confirm both.
-- **Coexistence:** keep everything under `/srv/osm/`, clean up `work/` after each
-  run, and cap transient usage so we never starve uMap of disk or I/O.
+→ **160 GB is comfortable for Europe.** Adding continents adds their file size
+(Asia ~15 GB, North America ~19 GB, Africa ~7 GB, South America ~4 GB, …). The
+tightest moment is the update of the biggest source, so the daily workflow
+**guards on free disk** before the update and before the build (§A6).
 
 ## A2. Provisioning — Ansible role
 
 Provisioning lives in the **`osm_extract_service` Ansible role**
-([`server/ansible/`](server/ansible/README.md)). The FOSSGIS server fleet is
-managed centrally (infra docs/playbooks in the FOSSGIS GitLab), so the role is
-meant to be **folded into the FOSSGIS setup**, matching their inventory/var
-conventions — to be agreed with the admins (§7).
+([`server/ansible/`](server/ansible/README.md)). It is written so it can later be
+reused for the FOSSGIS server (§A9).
 
 The role ([tasks](server/ansible/roles/osm_extract_service/tasks/main.yml)):
 
 | Step | Purpose |
 |---|---|
 | apt packages: `osmium-tool`, `nginx`, `git`, `jq`, `python3*`, `python3-yaml` | extract/serve/diff toolchain + orchestrator |
-| pyosmium venv + `pyosmium-up-to-date` on PATH | apply daily replication diffs |
+| pyosmium venv + `pyosmium-up-to-date` on PATH | apply Geofabrik's daily diffs |
 | unprivileged `osmrunner` user | the runner + pipeline run as non-root |
-| `/srv/osm/{planet,work,extracts}` | data + work + web root (A4) |
+| `/srv/osm/{sources,work,extracts}` | data + work + web root (A4) |
 | nginx site ([template](server/ansible/roles/osm_extract_service/templates/nginx-osm-extracts.conf.j2)) | serve extracts; reload only after `nginx -t` |
 
 The GitHub Actions **runner registration** is interactive (a one-time token) and
-stays **manual** — documented in the [role README](server/ansible/README.md).
+stays **manual** — see [docs/server-setup.md](docs/server-setup.md).
 
 ## A3. Self-hosted GitHub Actions runner ⚠️ security (mandatory)
 
-The repo is **public** and the runner sits on a **shared FOSSGIS server that also
-runs uMap**. A self-hosted runner executes whatever a workflow tells it to — so on
-a public repo this is the highest-risk part of the whole design, and the
-mitigations below are **required**, not optional. GitHub itself recommends
-*against* self-hosted runners on public repos unless locked down, because anyone
-can open a pull request that would otherwise run code on the box.
+The repo is **public**. A self-hosted runner executes whatever a workflow tells
+it to — so on a public repo this is the highest-risk part of the whole design,
+and the mitigations below are **required**, not optional. GitHub itself
+recommends *against* self-hosted runners on public repos unless locked down,
+because anyone can open a pull request that would otherwise run code on the box.
+(The reasoning applies to our own server as much as to a shared one: a compromised
+runner owns the box and the published downloads.)
 
 **Install + isolate**
 - Run the runner as a **dedicated unprivileged user** (e.g. `osmrunner`) via a
@@ -179,8 +168,7 @@ can open a pull request that would otherwise run code on the box.
   (`runs-on: [self-hosted, osm]`).
 - **No passwordless full `sudo`.** At most one allow-listed
   `systemctl reload nginx` (only if we adopt custom headers, §B5).
-- Confine our footprint to `/srv/osm/` with restrictive permissions so a
-  compromised job can't reach uMap's data.
+- Confine our footprint to `/srv/osm/` with restrictive permissions.
 
 **Never run untrusted PR code**
 - ✅ Done 2026-10-25 (see [README](README.md#github-repository-settings-done-2026-10-25)):
@@ -196,9 +184,10 @@ can open a pull request that would otherwise run code on the box.
 - Prefer **ephemeral** runners (clean checkout per job) + auto-update.
 - `GITHUB_TOKEN` **read-only by default**; grant `contents: write` only on the
   commit step.
-- Firewall: expose only 80/443 (nginx); the runner needs **outbound** to GitHub
-  only (no inbound).
+- Firewall: expose only 80/443 (nginx) and SSH; the runner needs **outbound** to
+  GitHub only (no inbound).
 
+**Packages & docs (for manual setup / further research)**
 **Packages & docs (for manual setup / further research)**
 - [Hosting your own runners — how the self-hosted runner feature works (start here)](https://docs.github.com/en/actions/hosting-your-own-runners)
 - [Runner application releases](https://github.com/actions/runner/releases) — the
@@ -212,17 +201,14 @@ Install flow (summary): download + unpack the runner package from the releases
 link → `./config.sh --url https://github.com/<org>/<repo> --token <token> --labels osm`
 → `sudo ./svc.sh install osmrunner && sudo ./svc.sh start`. (The deps are installed
 by the Ansible role (A2); runner registration is interactive and stays manual by
-design — see the [role README](server/ansible/README.md).)
-
-> Because the box also hosts uMap, this setup must be coordinated with **Lars
-> Lingner / the FOSSGIS OSM-server admins** before registering the runner.
+design.)
 
 **Status of these controls (what's enforced where):**
 - ✅ Code-enforced now: untrusted code never hits the self-hosted runner
-  ([daily.yml](.github/workflows/daily.yml)/[seed-planet.yml](.github/workflows/seed-planet.yml)
+  ([daily.yml](.github/workflows/daily.yml)/[seed-sources.yml](.github/workflows/seed-sources.yml)
   trigger only on `schedule`/`workflow_dispatch`; tests run on GitHub-hosted runners
   in [ci.yml](.github/workflows/ci.yml)); least-privilege token + no persisted
-  credentials on the shared box; one-shot push token.
+  credentials on the box; one-shot push token.
 - ⚙️ Manual one-time (provisioning/repo settings): dedicated unprivileged user, no
   sudo, firewall, and the repo toggle **Settings → Actions → Require approval for
   outside collaborators**.
@@ -234,11 +220,11 @@ design — see the [role README](server/ansible/README.md).)
 
 ```
 /srv/osm/
-  planet/
-    planet.osm.pbf          # the daily-updated full planet
-    sequence.state.txt      # replication state (managed by pyosmium-up-to-date)
-  work/                     # scratch space for intermediate extracts (gitignored)
-  extracts/                 # nginx web root  ->  https://osm.example.org/extracts/
+  sources/
+    europe.osm.pbf          # Geofabrik continent extract, daily diffs applied
+    europe.state.json       # data_timestamp, sequence_number, update_run_at (written by the orchestrator)
+  work/                     # scratch space for intermediate extracts (cleaned after each source)
+  extracts/                 # nginx web root  ->  https://<host>/extracts/
     osm-boundary-check/
       latest.osm.pbf        # stable filename, overwritten in place each run
       status.json
@@ -254,114 +240,90 @@ Serve only `/srv/osm/extracts` as static files, via a `location /extracts/`
 prefix with `root {{ osm_root }}` (config: the role's
 [nginx template](server/ansible/roles/osm_extract_service/templates/nginx-osm-extracts.conf.j2)).
 A catch-all `location /` returns 404, so the rest of the volume
-(`planet/`, `work/`) is never exposed. Other properties, with autoindex off:
+(`sources/`, `work/`) is never exposed. Other properties, with autoindex off:
 
 - `Last-Modified` (from file mtime = when the extract was produced) — enables
   conditional GETs / caching.
 - Resumable large downloads (nginx sends `Accept-Ranges: bytes` for static files by default).
 - Long-lived files have stable URLs (see B7), so clients can cache by URL.
 
-Example server block sketch:
-
-```nginx
-server {
-    listen 443 ssl;
-    server_name osm.example.org;
-
-    location /extracts/ {
-        root /srv/osm;
-        add_header Cache-Control "public, max-age=3600";
-        # status.json next to each file carries the authoritative data-age info.
-        try_files $uri =404;
-    }
-
-    # Never expose the rest of /srv/osm (planet/, work/).
-    location / {
-        return 404;
-    }
-}
-```
-
 (Custom `X-OSM-*` data-age headers are an optional enhancement — see B5.)
 
 ## A6. Ongoing maintenance (kept minimal)
 
-- **Disk monitoring** — a workflow step fails loudly if free space drops below a
-  threshold (planet growth is the main risk).
+- **Disk monitoring** — [scripts/check-disk.sh](scripts/check-disk.sh) fails the
+  run if free space drops below 50 GB (default), before the update and before the
+  build. Source growth is the main risk.
 - **Runner health** — systemd restarts it; GitHub shows it offline if down.
 - **No app deploys** — logic changes ship by merging to `main`; the runner picks
   up the new workflow/scripts on the next run.
+- **Root tasks** (rare): OS/security updates, the runner agent's own updates, TLS
+  issuance/renewal (certbot automates renewal), nginx/Ansible changes, incident
+  debugging. We own the box, so these are ours; name a fallback person (§7).
 
-## A7. Access model & residual root tasks (feedback)
+## A7. Observing server load
 
-The target is exactly what was asked: **Lars provisions once (root), then almost
-everything runs through the runner as a non-root user.** Concretely:
+- **Per-run metrics from the pipeline itself** — the orchestrator records
+  timings; extend the runner steps to also capture **peak RAM (max RSS)** and
+  **wall time** per osmium step (`/usr/bin/time -v`) and free disk before/after,
+  and print them to the Actions log + `$GITHUB_STEP_SUMMARY`. That gives a public,
+  per-day record of resource cost without server access.
+- **Host monitoring** — Hetzner's graphs (CPU, disk, network) are enough to start
+  with; add an alert on disk usage.
 
-- **Root access:** Lars **plus a second admin as fallback** (bus factor). Both via
-  the FOSSGIS admin setup; no shared passwords.
-- **The runner runs as an unprivileged user** (`osmrunner`) with **no sudo**
-  (§A3). Day-to-day pipeline changes ship by merging to `main` — no server login.
-- **What still needs root occasionally** (not coverable by the runner):
-  OS/security updates, the GitHub runner agent's own updates, TLS issuance/renewal
-  (certbot automates renewal), nginx/Ansible changes, and incident debugging.
-  These are rare and shared between the two admins.
+## A8. Server hygiene
 
-So: **yes, one-time install + runner is enough for normal operation**, but plan
-for a couple of root touchpoints a year and a documented second admin.
+- osmium steps run strictly one after another (a single osmium process at a time
+  caps peak RAM and disk I/O).
+- No other tenant, so `nice`/`ionice` is not needed.
 
-## A8. Observing server load (feedback)
+## A9. Paused: FOSSGIS uMap server
 
-Two layers, because the box is shared with uMap:
-
-1. **Reuse FOSSGIS's existing host monitoring** — confirm what they run (Munin /
-   Prometheus+Grafana / Netdata) and watch CPU, **RAM**, disk space, and **disk
-   I/O** there. We should hook into it, not run a parallel stack. (Open TODO §7.)
-2. **Per-run metrics from the pipeline itself** — we already record update/extract
-   timings (§B5). Extend the runner steps to also capture **peak RAM (max RSS)**
-   and **wall time** per osmium step (`/usr/bin/time -v`) and free-disk before/after,
-   and print them to the Actions log + `$GITHUB_STEP_SUMMARY`. That gives a public,
-   per-day record of resource cost without server access.
-
-**Protecting uMap during the run:** run osmium under `nice`/`ionice` so it yields
-CPU and disk I/O to uMap, and **schedule off-peak** (see §B8). Alert (via the
-FOSSGIS monitoring) if a run pushes memory or disk past a threshold.
+The first plan was to run on the shared FOSSGIS e.V. uMap server at Hetzner
+(~585 GB disk, maintained by the FOSSGIS OSM-server admins, shared with uMap;
+planet-based, 87 GB). That variant is **paused** and kept for later. Agreed with
+the FOSSGIS admin (2026-10-25): if it comes back, it gets its **own Ansible role
+and task setup** in the FOSSGIS repo, separate from the uMap role. It may use
+shared services (e.g. nginx) but keeps **its own folders and users**. The
+pipeline code is the same; moving is mostly an inventory change. Things that
+would need settling then: coexistence with uMap (disk, RAM, I/O; `nice`/`ionice`,
+off-peak schedule), the runner setup with their admins, monitoring, a second
+root admin, and a subdomain + TLS. Details: [server/ansible/README.md](server/ansible/README.md).
 
 ---
 
 # Part B — How the application works
 
-## B1. Planet data lifecycle
+## B1. Source data lifecycle
 
-Two operations on `/srv/osm/planet/planet.osm.pbf`:
+A **source** is a Geofabrik continent extract
+(`https://download.geofabrik.de/<continent>-latest.osm.pbf`) kept at
+`/srv/osm/sources/<id>.osm.pbf`. Geofabrik also publishes daily diffs next to it
+(`<continent>-updates/`). Only sources that some project needs are touched.
+Implemented in [extractor/sources.py](extractor/sources.py):
 
-1. **Daily update (automatic).** Apply the OSMF replication diffs to bring the
-   planet up to date:
-   ```bash
-   pyosmium-up-to-date /srv/osm/planet/planet.osm.pbf
-   ```
-   `pyosmium-up-to-date` tracks the replication sequence number itself and pulls
-   the needed daily/hourly diffs. This runs first in the daily workflow (§C2).
+1. **Seed (automatic if missing, manual to redo).** Download the file with curl,
+   verify the `.md5`, swap it in atomically. `python3 -m extractor update`
+   seeds a missing source by itself; `python3 -m extractor seed [ids]` (workflow
+   [seed-sources.yml](.github/workflows/seed-sources.yml), typed confirmation) forces
+   a re-download, e.g. after corruption.
 
-2. **Re-seed (manual, on a button press).** Download a fresh planet from scratch
-   (e.g. after corruption, or to reset history). Triggered by a separate
-   `workflow_dispatch` workflow with a typed confirmation (§C3):
-   ```bash
-   # download planet-latest.osm.pbf + .md5, verify checksum, atomically replace
-   ```
-   This is **never** automatic.
+2. **Daily update (automatic).** `python3 -m extractor update` runs
+   `pyosmium-up-to-date --server <continent>-updates/` per active source. The
+   diffs are capped at ~3 GB per pass and every pass rewrites the file, so a
+   long gap takes a few passes (up to 10; progress is kept). Measured for Berlin:
+   79 days of diffs in one 16 s pass.
 
-After every update we record the data's own timestamp:
-
-```bash
-osmium fileinfo -g header.option.osmosis_replication_timestamp /srv/osm/planet/planet.osm.pbf
-# -> the osmosis_replication_timestamp: the real "as-of" date of the OSM data
-```
+After every update the orchestrator writes `<id>.state.json` with the data's own
+timestamp (`osmosis_replication_timestamp` from the pbf header), the sequence
+number, and when the update ran. Extracts lose the replication header, so
+`status.json` takes the data age from these state files.
 
 ## B2. Project configuration
 
 Each project is a folder under [`projects/`](projects/) with a `config.yaml`
-declaring an **area** and **tag filters**. Full schema and two worked examples
-are in [projects/README.md](projects/README.md). Minimal example:
+declaring an **area** and **tag filters**. Full schema and worked examples are in
+[projects/README.md](projects/README.md). Minimal example:
 
 ```yaml
 # project id = folder name (no `name:` field); full field list — description,
@@ -373,10 +335,13 @@ filters:
   - nwr/admin_level
 ```
 
-## B3. The static region tree + activation
+`area.region` is a region id, a source id (the whole continent), or `world`.
 
-Defined in [`regions/regions.yaml`](regions/regions.yaml):
-`world → continents → countries`, each with a polygon.
+## B3. The static tree + activation
+
+Defined in [`regions/regions.yaml`](regions/regions.yaml): **sources** at the
+top (Geofabrik continents), **regions** below them. A region's `parent` is a
+source or another region; each region has a polygon.
 
 **Polygon format: GeoJSON** (preferred over osmium's `.poly`), because it's a
 standard format we can lint and reuse. osmium accepts GeoJSON for both
@@ -384,43 +349,63 @@ standard format we can lint and reuse. osmium accepts GeoJSON for both
 GeoJSON `Polygon` or `MultiPolygon` (a `Feature`/`FeatureCollection` wrapping one
 is fine) — see "Input validation" below.
 
-Why a tree at all: cutting Germany directly from the 87 GB planet means reading
-the whole planet **per project**. Layering (`world → europe → germany`) means the
-expensive planet read happens **once**, then each continent is read once, etc.
+Why a tree at all: cutting Germany directly from the Europe file means reading
+all of Europe **per project**. Layering (`europe → germany → hessen`) means each
+file is read once to cut all its children.
 
 What's **static**: the shapes/parents in `regions.yaml`.
 What's **dynamic** (computed each run from the project configs):
 
-- **Activation** — a continent/country is built **only if** a project's area is
-  inside it. If no project touches Africa, Africa is never extracted.
+- **Activation** — a source or region is used **only if** a project needs it. If
+  no project touches Asia, Asia is never downloaded or cut.
 - **Tag union** — each intermediate node keeps only the **union** of tags needed
   by the projects beneath it (see B4).
 
 Resolving a project to a chain:
 
-- `area.region: germany` → follow `parent` links in `regions.yaml`
-  (`germany → europe → world`).
-- `area.polygon: ./x.geojson` → auto-detect the intersecting continent (and
-  country, if one is defined) by **bounding-box overlap**, with an optional
-  explicit `area.region` override to pin it.
+- `area.region: hessen` → follow `parent` links (`hessen → germany → europe`);
+  the chain ends at a source.
+- `area.region: europe` (a source id) → the whole source, filtered.
+- `area.region: world` → one chain per source (see below).
+- `area.polygon: ./x.geojson` → validated, but **not scheduled yet** (skipped
+  with a warning). Auto-detecting the parent by bounding box is a later step.
+
+**World projects.** A project with `area: {region: world}` is filtered from
+**every** source, one source at a time, and the pieces are merged:
+`osmium merge --with-history` followed by `osmium time-filter`. Continent files
+overlap, so the same object can appear in two files in different versions; this
+keeps the newest version of each (workaround for
+[osmium-tool#197](https://github.com/osmcode/osmium-tool/issues/197); idea from
+[k-yle/OpenSeaMap-vector](https://github.com/k-yle/OpenSeaMap-vector/blob/main/.github/workflows/planet.yml)).
+With only one active source there is nothing to merge. Tested with two sources: no
+duplicates.
 
 ## B4. The orchestrator (Python)
 
 Implemented in [`extractor/`](extractor/build.py): [build.py](extractor/build.py) (entry),
-[config.py](extractor/config.py) (load + validate), [geojson.py](extractor/geojson.py),
-[tags.py](extractor/tags.py) (tag union), [plan.py](extractor/plan.py) (DAG + steps). Pure
-planning + shelling out to `osmium`. Steps:
+[config.py](extractor/config.py) (load + validate), [sources.py](extractor/sources.py)
+(seed + update), [geojson.py](extractor/geojson.py), [tags.py](extractor/tags.py)
+(tag union), [plan.py](extractor/plan.py) (DAG + steps). Pure planning + shelling out
+to `osmium`. CLI:
+
+```bash
+python3 -m extractor update              # download missing sources, apply daily diffs
+python3 -m extractor build [--dry-run]   # plan, run osmium, write status; --dry-run only writes plan.json
+python3 -m extractor seed [ids]          # re-download sources from scratch
+```
+
+`build` does:
 
 **1. Load & validate** all `projects/*/config.yaml` + `regions/regions.yaml` and
 every referenced GeoJSON polygon — see **Input validation** below. Invalid inputs
 are **skipped**, not fatal.
 
 **2. Build the active DAG.** For each project, compute its chain
-`world → … → project`. Union all chains into one tree; drop unused branches.
+`source → … → project`. Union all chains into one forest (one tree per source);
+drop unused branches.
 
 **3. Compute the tag union per node.** For every intermediate node, merge the tag
-filters of all descendant projects. Resolution rules (the key subtlety the brief
-called out):
+filters of all descendant projects. Resolution rules:
 
 - Parse each filter into `(object-types, key, values | ALL)`.
 - Group by `key`.
@@ -430,47 +415,48 @@ called out):
 - **Object types:** union them per key (`n/x` + `w/x` → `nw/x`). Safe default is
   to broaden intermediate nodes to `nwr` so referenced geometry isn't dropped.
 - A project with **no filters** (wants everything) makes its whole branch
-  **unfiltered** — the optimisation is skipped for that branch (and we should
-  `log()` that, so it's visible why a parent got large).
+  **unfiltered** — the optimisation is skipped for that branch.
+- A source file itself is never tag-filtered as a whole; the first filter happens
+  on its children.
 
-> Example from the two sample projects: Germany needs `boundary` + `admin_level`,
-> France needs `amenity=playground`. The **Europe** node is built once with the
-> union `{boundary, admin_level, amenity=playground}`, then Germany and France
-> are cut from that much smaller Europe file.
+> Example from the sample projects: Germany needs `boundary` + `admin_level`,
+> France needs `amenity=playground`. The `germany` and `france` nodes are cut
+> from Europe in one pass, then each is tag-filtered to the union of what its
+> projects need.
 
-**4. Emit a resolved plan** (`plan.json`) — the concrete osmium commands, the tag
-unions per node, and which regions were activated. **This gets committed** so the
-exact thing that ran is reviewable in git history.
+**4. Emit a resolved plan** (`plan.json`) — the concrete osmium steps, the tag
+unions per node, and which sources/regions were activated. **This gets
+committed** so the exact thing that ran is reviewable in git history.
 
-**5. Execute, top-down.** Use osmium's **single-pass multi-extract** so each
-parent file is read only once:
+**5. Execute, one source at a time.** For each source: one multi-extract per
+parent (each parent file is read once), tag-filter each child to its union, run
+the project leaves, then **delete that source's intermediates** before the next
+source starts. World projects write one piece per source into `work/`; a final
+`merge` step combines them. Steps run strictly sequentially.
 
 ```bash
-# One read of the planet -> all active continents (geometry only):
-osmium extract --config continents.json --strategy complete_ways \
-  /srv/osm/planet/planet.osm.pbf
+# One read of europe -> germany + france (geometry only):
+osmium extract --config europe.extracts.json --strategy smart europe.osm.pbf
 
-# Tag-filter each continent to its union. osmium INCLUDES referenced objects by
+# Tag-filter each child to its union. osmium INCLUDES referenced objects by
 # default (so ways/relations keep their geometry); -R/--omit-referenced disables that.
-osmium tags-filter \
-  work/europe.osm.pbf nwr/boundary=administrative nwr/admin_level nwr/amenity=playground \
-  -o work/europe.filtered.osm.pbf
-
-# One read of europe.filtered -> all projects under Europe:
-osmium extract --config europe-projects.json --strategy smart \
-  work/europe.filtered.osm.pbf
+osmium tags-filter germany.osm.pbf nwr/boundary=administrative nwr/admin_level \
+  -o germany.filtered.osm.pbf
 
 # Final per-project tag-filter to its exact tags:
-osmium tags-filter \
-  work/germany.osm.pbf nwr/boundary=administrative nwr/admin_level \
+osmium tags-filter germany.filtered.osm.pbf nwr/boundary=administrative nwr/admin_level \
   -o /srv/osm/extracts/osm-boundary-check/latest.osm.pbf
+
+# World projects, merging the pieces of several sources:
+osmium merge --with-history europe-piece.osm.pbf asia-piece.osm.pbf -o merged.osm.pbf
+osmium time-filter merged.osm.pbf -o /srv/osm/extracts/<project>/latest.osm.pbf
 ```
 
 Notes:
 - `--strategy` cuts geometry: osmium's default is `complete_ways` (2 passes);
   `smart` (3 passes, a bit more RAM) also completes multipolygon **relations**, so
-  it's the safer default for boundary projects. We pick the strongest strategy any
-  project under a region needs (see §B8).
+  it's the safer default for boundary projects. The strongest strategy any
+  project under a parent needs wins (see §B8).
 - osmium tags-filter **includes referenced objects by default** (up to 3 passes,
   keeps ID tables in RAM) so results build valid geometry; `-R/--omit-referenced`
   is the cheaper 1-pass mode that drops them. The per-project `add_referenced`
@@ -478,33 +464,34 @@ Notes:
   no `--add-referenced` flag.
 - The multi-extract `--config` JSON is **generated** by the orchestrator from the
   active nodes; polygons are referenced as **GeoJSON** files.
+- `build` refuses to run if an active source file is missing (run `update`
+  first), and fails if no valid project is left, rather than publishing an empty
+  index.
 
 **Input validation (fail-soft).** Before building anything, the orchestrator
-checks each project/region:
+checks each source/region/project:
 
-- the YAML parses and has the required fields;
-- the referenced GeoJSON exists and its geometry is a **`Polygon` or
-  `MultiPolygon`** (unwrapping a `Feature`/`FeatureCollection`); anything else
-  (point, line, empty, malformed JSON) is rejected.
+- the YAML parses and has the required fields; ids are valid (`world` is reserved);
+  a source url must be an https `…-latest.osm.pbf` download;
+- a region's parent chain reaches a source; its GeoJSON exists and its geometry is
+  a **`Polygon` or `MultiPolygon`** (unwrapping a `Feature`/`FeatureCollection`);
+  anything else (point, line, empty, malformed JSON) is rejected.
 
-Invalid projects/regions are **skipped** so one broken config can't break
-everyone else's extract. Every skip is reported as a **GitHub Actions error
-annotation** (`::error file=…::`, which highlights the offending file in the run)
-plus a line in the run summary (§C1). Optional toggle: also exit non-zero so the
-job is marked failed when any input was invalid.
+Invalid items are **skipped** so one broken config can't break everyone else's
+extract. Every skip is reported as a **GitHub Actions error annotation**
+(`::error file=…::`, which highlights the offending file in the run) plus a line
+in the run summary (§C1).
 
-**Implementation status (pre-alpha).** The planning logic is implemented and
-unit-tested with Python's built-in `unittest` (`python3 -m unittest`):
-`extractor/geojson.py` (polygon validation), `extractor/tags.py` (filter parsing +
-the union algorithm), `extractor/plan.py` (chain resolution, activation, per-node
-union, ordered osmium steps), with `extractor/config.py` (load/validate) and
-`extractor/build.py` (executor) on top. `python3 -m extractor --dry-run` emits
-`plan.json` without invoking osmium. The full osmium path has run end-to-end
-**locally** (Berlin extract as planet, `test-neukoelln` project), not yet on the server.
+**Implementation status (pre-alpha).** The planning logic is unit-tested with
+Python's built-in `unittest` (`python3 -m unittest`). The full osmium path has run
+end-to-end **locally**: Germany as a Europe stand-in (5 projects, 12 osmium steps,
+~8.5 min, 5.3 GB peak RAM), a two-source merge (no duplicates), and a real
+Geofabrik seed + daily-diff update for Berlin. Not yet run on the server.
 
 ## B5. Output, status files, HTTP headers
 
-Next to every extract, write `status.json`:
+Next to every extract, write `status.json` (shape: `write_status` in
+[extractor/build.py](extractor/build.py)):
 
 ```json
 {
@@ -518,20 +505,28 @@ Next to every extract, write `status.json`:
   "sha256": "…",
   "area": { "region": "germany" },
   "filters": ["nwr/boundary=administrative", "nwr/admin_level"],
-  "pipeline": ["world", "europe", "germany"],
+  "pipeline": ["europe", "germany"],
 
-  "data_timestamp": "2026-06-22T20:00:00Z",   // real OSM data date (osmium fileinfo)
-  "planet_sequence_number": 1234567,
-  "update_run_at": "2026-06-23T03:05:00Z",     // when the daily update ran
-  "extract_run_at": "2026-06-23T03:20:00Z",    // when this extract was produced
+  "data_timestamp": "2026-10-24T20:20:00Z",   // oldest data_timestamp of the project's sources
+  "sources": {
+    "europe": {
+      "url": "https://download.geofabrik.de/europe-latest.osm.pbf",
+      "data_timestamp": "2026-10-24T20:20:00Z",
+      "sequence_number": 4321,
+      "update_run_at": "2026-10-25T02:20:00Z"
+    }
+  },
+  "extract_run_at": "2026-10-25T02:40:00Z",     // when this extract was produced
   "extract_duration_seconds": 42,
 
-  "download_url": "https://osm.example.org/extracts/osm-boundary-check/latest.osm.pbf"
+  "download_url": "https://<host>/extracts/osm-boundary-check/latest.osm.pbf"
 }
 ```
 
-This covers every "how old is the data" question from the brief: the data's own
-date, the last update-run, the last extract-run, and per-extract timing. The
+For a world project, `pipeline` lists every source plus `"merge"`, and `sources`
+has one entry per source. This covers every "how old is the data" question: the
+data's own date (the oldest of the sources it is built from), each source's last
+update run, the last extract run, and per-extract timing. The
 `description`/`repository`/`homepage`/`contact` fields are copied straight from
 the project's `config.yaml`, so every download is traceable to an owner.
 
@@ -573,48 +568,37 @@ The data file is always `latest.osm.pbf` (overwritten in place each run), so the
 URL is stable across runs — consumers hard-code it and check `status.json` /
 `Last-Modified` for freshness.
 
-## B8. Performance, RAM & coexistence with uMap (feedback)
+## B8. Performance & RAM
 
 **Region filter vs. tag filter — which is smarter?** They are different osmium
 tools and not either/or; **we use both, in a deliberate order**:
 
-- **Region (geometry) filtering first, hierarchically.** This is exactly osmium's
-  own recommendation for splitting a big file: *"first create several larger
-  extracts and then split them again and again into smaller pieces"*
+- **Region (geometry) filtering first, hierarchically.** This is osmium's own
+  recommendation for splitting a big file: *"first create several larger extracts
+  and then split them again and again into smaller pieces"*
   ([osmium-extract docs](https://docs.osmcode.org/osmium/latest/osmium-extract.html)).
-  We read the 87 GB planet **once** to cut all active continents, then cut
-  countries from continents, etc. (§B3/§B4).
+  Starting from continent files instead of the planet already did the first split
+  for us.
 - **Tag filtering reduces each region to the tags projects asked for.** Because
   osmium can't geo-cut and tag-filter in one command, these are separate passes.
-- **Open optimisation:** for very *sparse* tag sets (e.g. only boundaries +
-  playgrounds) a **global tag-filter pass before the region cuts** can shrink the
-  87 GB planet a lot up front. It's not always a win (boundary relations pull in
-  many referenced members), so it's a **benchmark TODO** (§7), not a default.
+- **Open optimisation:** for very *sparse* tag sets a **tag-filter pass before the
+  region cuts** can shrink the source a lot up front. It's not always a win
+  (boundary relations pull in many referenced members), so it's a **benchmark
+  TODO** (§7), not a default.
 
-**Will the RAM be enough?** Very likely yes — osmium **streams** the file; it does
-*not* load 87 GB into memory. RAM is driven by **ID bitmaps**, roughly
-`#extracts × (highest_node_id / 8)` for the `simple` strategy, **~2×** for
-`complete_ways`, and a bit more for `smart`
+**Will the RAM be enough?** Very likely yes — osmium **streams** the file; RAM is
+driven by **ID bitmaps**, roughly `#extracts × (highest_node_id / 8)` for the
+`simple` strategy, **~2×** for `complete_ways`, and a bit more for `smart`
 ([docs](https://docs.osmcode.org/osmium/latest/osmium-extract.html)); tags-filter
 keeps "tables of object IDs it needs" (and with `-R/--omit-referenced` keeps
-*none*). That's on the order of a few GB, not tens — but the server's RAM is still
-**unconfirmed (§3)**, so this must be measured (§A8) before trusting it.
+*none*). Measured: 5.3 GB peak for the Germany run (above). Europe on 16 GB still
+needs a real measurement.
 
 **Strategy choice (memory vs. completeness):** osmium's default is `complete_ways`
 (2 passes); `smart` (3 passes, a bit more RAM) also completes **relations**, which
-boundary projects need — so we default to the strongest strategy any project under
-a region requests (now honored per project). Projects that don't need relations can
-set `complete_ways` to use less RAM.
-
-**Will it disturb uMap?** The real contention is **disk I/O** (reading 87 GB +
-writing intermediates) and secondarily RAM, on a shared box. Mitigations:
-
-- Run osmium under **`nice` + `ionice`** so it yields CPU and I/O to uMap.
-- **Schedule off-peak** (the daily cron time is a TODO §7; pick a quiet window
-  *after* the OSMF diffs are available).
-- **Cap concurrency** and clean `work/` immediately (§A1), and **watch RAM/I/O**
-  in the FOSSGIS monitoring (§A8) with an alert threshold.
-- Confirm headroom over uMap's own steady-state usage **before** going live.
+boundary projects need — so we use the strongest strategy any project under a
+parent requests. Projects that don't need relations can set `complete_ways` to
+use less RAM.
 
 **Measured (first benchmark).** A Dockerized run on the 4.4 GB Germany extract
 ([experiments/performance/](experiments/performance/), report:
@@ -623,27 +607,25 @@ writing intermediates) and secondarily RAM, on a shared box. Mitigations:
 size); `smart` costs only ~12 s / ~0.2 GB more than `complete_ways` and completes
 relations (so it's the right boundary default); `tags-filter` **with** referenced
 objects ≈ 2.2 GB vs **`-R`** ≈ 0.25 GB (but `-R` drops geometry); and for our
-sparse tags, tag-then-region was marginally faster than region-then-tag. Takeaway:
-**budget ≥ 8 GB headroom**, the run is **disk-I/O bound** (a few full passes), and
-the results must be **re-measured on the planet** (the country file under-counts
-data volume even though it exercises realistic RAM).
+sparse tags, tag-then-region was marginally faster than region-then-tag. The run
+is **disk-I/O bound** (a few full passes).
 
 ---
 
 # Part C — CI/CD workflows (GitHub Actions)
 
 The pipeline workflows ([daily.yml](.github/workflows/daily.yml),
-[seed-planet.yml](.github/workflows/seed-planet.yml)) run on
-`runs-on: [self-hosted, osm]` with a `concurrency` group so two runs never touch
-the planet at once. Unit tests ([ci.yml](.github/workflows/ci.yml)) run on
+[seed-sources.yml](.github/workflows/seed-sources.yml)) run on
+`runs-on: [self-hosted, osm]` with a shared `concurrency` group so two runs never
+touch the sources at once. Unit tests ([ci.yml](.github/workflows/ci.yml)) run on
 **GitHub-hosted** runners, never the self-hosted one (§A3).
 
 ## C1. Logging & observability
 
-- Every step streams to the **Actions log** (publicly viewable if the repo is
+- Every step streams to the **Actions log** (publicly viewable, the repo is
   public) — this satisfies "logging must be visible in Actions".
 - The orchestrator writes a human summary to **`$GITHUB_STEP_SUMMARY`**:
-  regions activated, tag unions, per-step timings, output sizes, and **any
+  sources and regions activated, project and step counts, and **any
   skipped/invalid inputs**.
 - Validation failures (§B4) are emitted as **`::error file=…::` annotations** so
   they surface at the top of the run and on the offending file.
@@ -651,64 +633,42 @@ the planet at once. Unit tests ([ci.yml](.github/workflows/ci.yml)) run on
 
 ## C2. [`daily.yml`](.github/workflows/daily.yml) — update + extract (scheduled)
 
-Runs the update, then the extract, in order, on a schedule.
+Runs at **02:17 UTC** (Geofabrik's daily diffs cover data up to ~20:20 UTC and are
+published soon after; the odd minute avoids the top-of-hour cron rush) and on
+manual dispatch. Job timeout 600 min. Steps, in order:
 
-```yaml
-name: daily
-on:
-  schedule:
-    - cron: "0 3 * * *"        # verify vs. when OSMF daily diffs land
-  workflow_dispatch: {}
-concurrency:
-  group: osm-pipeline
-  cancel-in-progress: false
-jobs:
-  pipeline:
-    runs-on: [self-hosted, osm]
-    steps:
-      - uses: actions/checkout@v4
-      - name: Update planet
-        run: ./scripts/update-planet.sh
-      - name: Build extracts
-        run: python3 -m extractor    # the orchestrator
-      - name: Commit resolved plan + status
-        run: ./scripts/commit-results.sh
-```
+1. checkout (no persisted credentials)
+2. `./scripts/check-disk.sh` (an update rewrites a whole source file)
+3. `python3 -m extractor update`
+4. `./scripts/check-disk.sh` (intermediates need room too)
+5. `python3 -m extractor build`
+6. clean `work/` (runs even on failure)
+7. `./scripts/commit-results.sh` — commits `plan.json` + `status/` (the only step
+   with `contents: write`)
 
-> Alternative: split update and extract into two workflows chained via
-> `workflow_run`. Single workflow is simpler given one runner with local data, so
-> that's the default here.
+A single workflow is simpler than chaining update and extract via `workflow_run`,
+given one runner with local data.
 
-## C3. [`seed-planet.yml`](.github/workflows/seed-planet.yml) — full re-download (manual only)
+## C3. [`seed-sources.yml`](.github/workflows/seed-sources.yml) — full re-download (manual only)
 
-```yaml
-name: seed-planet
-on:
-  workflow_dispatch:
-    inputs:
-      confirm:
-        description: "Type 'reseed' to confirm a full planet re-download"
-        required: true
-jobs:
-  seed:
-    if: ${{ inputs.confirm == 'reseed' }}
-    runs-on: [self-hosted, osm]
-    steps:
-      - uses: actions/checkout@v4
-      - run: ./scripts/seed-planet.sh
-```
+`workflow_dispatch` with a required input `confirm` that must be `reseed`, and an
+optional `sources` input (space-separated ids; empty = every source in use). Runs
+the disk guard, then `python3 -m extractor seed $SOURCES`: download, verify md5,
+atomic swap. The daily job seeds a missing source by itself, so this is only for a
+corrupt or hopelessly outdated file.
 
 ---
 
 ## 5. Repository layout & built files
 
-Links point at the actual files in this repo. The planning logic and its tests
-are real and green; the osmium **execution** path is **pre-alpha — not yet run
-end-to-end**.
+Links point at the actual files in this repo.
 
 **Docs**
 - [PLAN.md](PLAN.md) — this document
 - [README.md](README.md) · [ZUSAMMENFASSUNG.de.md](ZUSAMMENFASSUNG.de.md) — German one-pager
+- [docs/poc-hosting.md](docs/poc-hosting.md) — hosting research and the decision
+- [docs/server-setup.md](docs/server-setup.md) — step-by-step server setup
+- [docs/ci-compute-alternatives.md](docs/ci-compute-alternatives.md) — older CI/compute research (full planet)
 
 **Inputs — configuration (committed by hand)**
 - [projects/](projects/README.md) — one folder per project (schema + conventions in the README)
@@ -716,15 +676,17 @@ end-to-end**.
   - [playgrounds-france/config.yaml](projects/playgrounds-france/config.yaml) — illustrative (playgrounds, France)
   - [spieli/config.yaml](projects/spieli/config.yaml) — **real** (playground POIs, Hessen)
   - [osm-boundary-checker-germany/config.yaml](projects/osm-boundary-checker-germany/config.yaml) — **real** (admin + postal-code boundaries, Germany)
-- [regions/regions.yaml](regions/regions.yaml) — the static hierarchy ([README](regions/README.md))
-  - [regions/polygons/](regions/polygons/README.md) — GeoJSON Polygon/MultiPolygon shapes (only the Neukölln test polygon is committed so far)
+  - [test-neukoelln/config.yaml](projects/test-neukoelln/config.yaml) — test (spieli tags, Berlin-Neukölln)
+- [regions/regions.yaml](regions/regions.yaml) — sources and regions ([README](regions/README.md))
+  - [regions/polygons/](regions/polygons/README.md) — GeoJSON Polygon/MultiPolygon shapes (Germany, France, Hessen, Neukölln)
 
-**Orchestrator — Python, pre-alpha** (`python3 -m extractor`; `--dry-run` plans only)
-- [extractor/build.py](extractor/build.py) — entry point: load → plan → write `plan.json` → run osmium → write status files
-- [extractor/config.py](extractor/config.py) — load + fail-soft validate region/project configs (IO; PyYAML)
+**Orchestrator — Python, pre-alpha** (`python3 -m extractor update|build|seed`)
+- [extractor/build.py](extractor/build.py) — entry point and CLI: load → plan → write `plan.json` → run osmium → write status files
+- [extractor/sources.py](extractor/sources.py) — seed + daily-diff update of the source files, state files
+- [extractor/config.py](extractor/config.py) — load + fail-soft validate source/region/project configs (IO; PyYAML)
 - [extractor/geojson.py](extractor/geojson.py) — pure GeoJSON polygon validation
 - [extractor/tags.py](extractor/tags.py) — pure osmium tags-filter parsing + per-node **tag union**
-- [extractor/plan.py](extractor/plan.py) — pure planning: region chains, active-region selection, ordered osmium steps
+- [extractor/plan.py](extractor/plan.py) — pure planning: chains, activation, ordered osmium steps (incl. world merge)
 - [extractor/github.py](extractor/github.py) — Actions error/warning annotations + step summary
 - [extractor/types.py](extractor/types.py) — shared data types + id validation
 - Tests (`python3 -m unittest`, standard library only): [tests/](tests/)
@@ -737,60 +699,47 @@ end-to-end**.
 
 **CI/CD** (Part C)
 - [.github/workflows/ci.yml](.github/workflows/ci.yml) — tests (`python3 -m unittest`) on **GitHub-hosted** runners (never self-hosted)
-- [.github/workflows/daily.yml](.github/workflows/daily.yml) — update + extract + commit (self-hosted)
-- [.github/workflows/seed-planet.yml](.github/workflows/seed-planet.yml) — manual full re-download
-- Scripts: [update-planet.sh](scripts/update-planet.sh) · [seed-planet.sh](scripts/seed-planet.sh) · [commit-results.sh](scripts/commit-results.sh) · [check-disk.sh](scripts/check-disk.sh)
+- [.github/workflows/daily.yml](.github/workflows/daily.yml) — update + build + commit (self-hosted)
+- [.github/workflows/seed-sources.yml](.github/workflows/seed-sources.yml) — manual full re-download of sources
+- Scripts: [commit-results.sh](scripts/commit-results.sh) · [check-disk.sh](scripts/check-disk.sh)
 
 **Generated each run (committed metadata, never binaries)**
 - `status/` — per-project `status.json` + `index.json`
-- `plan.json` — the resolved plan (also produced by `--dry-run`)
+- `plan.json` — the resolved plan (also produced by `build --dry-run`)
 
 ---
 
 ## 6. Phased implementation
 
-1. **MVP, no optimisation.** One project, one region, cut directly from the
-   planet. Prove: daily update → extract → nginx download → `status.json`.
-   Get the **runner + nginx + daily schedule** working end-to-end.
-2. **Hierarchy + activation.** Add continents/countries, build only active
-   branches, single-pass multi-extract.
-3. **Dynamic tag union.** Compute per-node tag unions; commit `plan.json`.
-4. **Polish.** `index.json`, step summaries, disk-space guard, optional custom
-   HTTP headers, custom-polygon projects with auto-detected parents.
+1. **Local proof (done).** Planner, osmium execution, source update and world
+   merge run locally against Geofabrik files.
+2. **Server MVP.** Provision the CX43 with the Ansible role, register the runner,
+   seed Europe, run `daily.yml` once by hand: update → build → nginx download →
+   `status.json`. Set the real `PUBLIC_BASE` and TLS.
+3. **Measure and tune.** Peak RAM and runtime for Europe, per-step metrics in the
+   step summary (§A7).
+4. **More continents.** Enable sources in `regions.yaml` one by one, up to the
+   whole world; first world project to exercise the merge for real.
+5. **Polish.** Custom-polygon projects with auto-detected parents, optional custom
+   HTTP headers, runner hardening (§A3).
 
 ---
 
-## 7. Open questions for discussion
+## 7. Open questions
 
-(Server, planet size, and repo visibility are settled — see §3. Remaining
-design/ops questions:)
-
-1. **Fold the Ansible role into FOSSGIS** — the [`osm_extract_service` role](server/ansible/README.md)
-   exists; agree its placement / var conventions with the FOSSGIS GitLab setup (§A2).
-2. **Coexistence with uMap** — confirm disk **and RAM** headroom and that our
-   daily CPU/disk-I/O won't impact uMap (§A1/§B8); agree the runner setup with the
-   FOSSGIS admins (§A3).
-3. **Server RAM / disk type** — get the real CPU/RAM/SSD figures (§3) so we can
-   trust the osmium memory estimate in §B8.
-4. **Load monitoring** — confirm which monitoring stack FOSSGIS runs and hook into
-   it; add per-run RAM/time/disk metrics to the pipeline (§A8).
-5. **Filtering-strategy benchmark** — first pass **done** on a country file
-   ([experiments/performance/](experiments/performance/), §B8); still TODO:
-   re-run **on the planet** and **on the real server** to confirm RAM and that uMap
-   is unaffected.
-6. **Off-peak schedule + nice/ionice** — pick the daily cron window and I/O
-   priority so the run stays out of uMap's way (§A8/§B8).
-7. **Runner hardening** — adopt an ephemeral runner + dedicated runner group (§A3).
-8. **Second root admin** — name the fallback admin alongside Lars (§A7).
-9. **Download host + TLS** — reuse a subdomain of the uMap instance, or a new
-   host? Who manages the cert?
-10. **Country layer depth** — always include a country layer, or only add one when
-    ≥N projects share a country (to avoid pointless intermediate extracts)?
-11. **Custom polygons** — do projects need arbitrary polygons (cities, custom
-    boundaries), or always a named region? (Currently validated but skipped — §B3.)
-12. **Commit polygons to git?** Recommended (small, reproducible) — confirm.
-13. **HTTP data-age headers** — is `Last-Modified` + `status.json` enough, or do
+1. **Download host + TLS** — which domain, who manages DNS and the cert?
+2. **Europe on the real box** — runtime and peak RAM (§B8); does 16 GB hold with
+   `smart` and several projects?
+3. **Runner hardening** — adopt an ephemeral runner + dedicated runner group (§A3).
+4. **Fallback admin** — name a second person with root on the box.
+5. **Load metrics** — add per-run RAM/time/disk to the pipeline (§A7).
+6. **Tag filter before region cut** — benchmark on a continent file (§B8).
+7. **More continents** — check Russia's coverage in Geofabrik's tree; disk plan
+   once North America and Asia are on.
+8. **Country layer depth** — always include a country layer, or only add one when
+   ≥N projects share a country (to avoid pointless intermediate extracts)?
+9. **Custom polygons** — do projects need arbitrary polygons (cities, custom
+   boundaries), or always a named region? (Currently validated but skipped — §B3.)
+10. **HTTP data-age headers** — is `Last-Modified` + `status.json` enough, or do
     we need the custom `X-OSM-*` headers (which add a small nginx-reload step)?
-14. **Schedule timing** — what time are OSMF daily diffs reliably available, so we
-    schedule `daily.yml` after them?
-```
+11. **FOSSGIS server** — when to revisit the paused variant (§A9).

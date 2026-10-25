@@ -1,19 +1,21 @@
 # {{ ansible_managed }}
 # nginx site for serving OSM extracts (PLAN.md §A5).
 #
-# Ships working over HTTP so `nginx -t` passes before any cert exists. Add TLS
-# with certbot (`certbot --nginx -d {{ osm_download_hostname }}`), which injects the
-# ssl_certificate lines and an HTTP->HTTPS redirect into this server block.
+# Ships working over HTTP so `nginx -t` passes before any cert exists. With
+# osm_download_hostname "_" this is the default server and answers on the bare IP.
+# Once a domain exists, set the hostname, re-run the role, then run
+# `certbot --nginx -d <hostname>`, which injects the ssl_certificate lines and an
+# HTTP->HTTPS redirect into this server block.
 #
 # URL layout matches the documented download URLs (PLAN.md §B7):
 #   https://{{ osm_download_hostname }}/extracts/<project-id>/latest.osm.pbf
 # `location /extracts/` + `root {{ osm_root }}` maps that to
 # {{ osm_root }}/extracts/<project-id>/latest.osm.pbf. Everything else on the
-# volume (planet/, work/) is NOT exposed — the catch-all location returns 404.
+# volume (sources/, work/) is NOT exposed — the catch-all location returns 404.
 
 server {
-    listen 80;
-    listen [::]:80;
+    listen 80{{ ' default_server' if osm_download_hostname == '_' else '' }};
+    listen [::]:80{{ ' default_server' if osm_download_hostname == '_' else '' }};
     server_name {{ osm_download_hostname }};
 
     server_tokens off;
@@ -33,7 +35,7 @@ server {
         try_files $uri =404;
     }
 
-    # Never expose the rest of {{ osm_root }} (planet/, work/).
+    # Never expose the rest of {{ osm_root }} (sources/, work/).
     location / {
         return 404;
     }

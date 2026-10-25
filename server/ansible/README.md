@@ -1,14 +1,70 @@
 # server/ansible — provisioning
 
-One-time provisioning for the osm-pbf-filter-service host (PLAN.md Part A). After
-this runs, the GitHub Actions runner does everything else; you shouldn't need to
-log into the server for normal operation.
+One-time provisioning for our own osm-pbf-filter-service server: a Hetzner Cloud
+**CX43** (8 vCPU, 16 GB RAM, 160 GB NVMe), **Debian 12**. After this runs, the
+GitHub Actions runner does everything else; you shouldn't need to log into the
+server for normal operation. Step-by-step guide:
+[docs/server-setup.md](../../docs/server-setup.md).
 
-> **Paused (2026-10-25).** The uMap server setup is on hold. First we prove the
-> pipeline works for a small area (Berlin/Germany) on rented-by-the-hour compute
-> with S3 for the files. This role stays here as a reference for later.
+## What the role does
 
-> **Agreed with the FOSSGIS admin (2026-10-25).** When this comes back, it does
+`roles/osm_extract_service/` (see [tasks/main.yml](roles/osm_extract_service/tasks/main.yml)):
+
+1. installs apt packages: `osmium-tool`, `python3-pyosmium`, `python3-yaml`,
+   `nginx`, `git`, `jq`, `curl`, `certbot`, `unattended-upgrades`, `ufw`;
+2. links `pyosmium-up-to-date` onto PATH. Debian 12's `python3-pyosmium` (3.6.0)
+   ships it as `/usr/lib/python3-pyosmium/pyosmium-up-to-date` and supports
+   `--size` and `--server`, so no virtualenv is needed;
+3. turns on automatic security updates (`unattended-upgrades`);
+4. creates the unprivileged runner user `osmrunner` (system user, **no sudo**);
+5. creates `/srv/osm/{sources,work,extracts}` owned by that user;
+6. installs the nginx site (HTTP, serves `/extracts/`), removes Debian's default
+   site, and reloads nginx only after `nginx -t` passes. The default
+   `osm_download_hostname: "_"` makes it the default server, so it works with
+   only an IP address;
+7. enables `ufw` with 22, 80, 443 allowed and everything else inbound denied.
+
+**Firewall decision:** the main filter is the **Hetzner Cloud Firewall**
+(created in the console, free, rules 22/80/443). `ufw` is a second layer on the
+box, kept minimal; set `osm_enable_ufw: false` to drop it.
+
+Variables are in [defaults/main.yml](roles/osm_extract_service/defaults/main.yml).
+Override per inventory or in the play.
+
+## Run
+
+Needs Ansible on your machine plus the `community.general` collection (for `ufw`):
+
+```bash
+ansible-galaxy collection install community.general
+cd server/ansible
+cp inventory.example.ini inventory.ini   # put the server IP in; initial login is root with your SSH key
+ansible-playbook -i inventory.ini playbook.example.yml
+```
+
+The role is idempotent; re-run it after OS upgrades or variable changes.
+
+## Manual follow-up (NOT in the role)
+
+Runner registration needs a one-time token from GitHub (Settings -> Actions ->
+Runners -> New self-hosted runner), so it stays manual. Full commands with the
+current runner version are in [docs/server-setup.md](../../docs/server-setup.md#4-register-the-github-actions-runner).
+In short: download the runner as `osmrunner`, `./config.sh --labels osm
+--name hetzner-osm`, then as root `./svc.sh install osmrunner && ./svc.sh start`.
+
+Then:
+
+- Keep the runner locked down (PLAN.md §A3): fork PRs need approval, no fork
+  `pull_request` triggers on the self-hosted runner, no sudo for `osmrunner`.
+- Once a domain exists: set `osm_download_hostname`, re-run the role, run
+  `certbot --nginx -d <hostname>`, and update `PUBLIC_BASE` in `extractor/build.py`.
+
+## Paused: FOSSGIS / uMap variant
+
+> **Paused (2026-10-25).** Running this on the shared FOSSGIS uMap server is on
+> hold; we run our own server instead. This note stays relevant for later.
+>
+> **Agreed with the FOSSGIS admin (2026-10-25).** If it comes back, it does
 > **not** hook into the uMap role or its tasks. It gets its **own Ansible role /
 > task setup** in the FOSSGIS repo. It may use the same shared services that the
 > server already has (e.g. nginx), but keeps its **own folders and its own users**,
@@ -16,46 +72,3 @@ log into the server for normal operation.
 >
 > FOSSGIS Ansible repo (access needed, ask the FOSSGIS admins), uMap role for
 > reference: <https://gitlab.fossgis.de/osm-server/ansible_openstreetmap.de/-/blob/master/roles/umap/tasks/main.yml?ref_type=heads>
-
-## What the role does
-
-`roles/osm_extract_service/` (see [tasks/main.yml](roles/osm_extract_service/tasks/main.yml)):
-
-1. installs system packages (`osmium-tool`, `nginx`, `git`, `jq`, `python3*`,
-   `python3-yaml` for the Python orchestrator);
-2. creates a pyosmium virtualenv and links `pyosmium-up-to-date` onto PATH;
-3. creates the unprivileged runner user (`osmrunner`);
-4. creates `/srv/osm/{planet,work,extracts}` owned by that user;
-5. installs + enables the nginx site (HTTP; certbot adds TLS) and reloads nginx
-   only after `nginx -t` passes.
-
-Variables are in [defaults/main.yml](roles/osm_extract_service/defaults/main.yml)
-(host, runner user, paths, packages). Override per inventory.
-
-## Run (standalone example)
-
-```bash
-cd server/ansible
-ansible-playbook -i inventory.example.ini playbook.example.yml
-```
-
-## Manual follow-up (NOT in the role)
-
-The GitHub Actions runner registration is interactive (needs a one-time token),
-so it stays manual. As the `osmrunner` user:
-
-```bash
-# Download the package: https://github.com/actions/runner/releases
-mkdir -p ~/actions-runner && cd ~/actions-runner
-tar xzf ~/actions-runner-linux-x64-*.tar.gz
-./config.sh --url https://github.com/<org>/<repo> --token <RUNNER_TOKEN> \
-  --labels osm --name umap-osm
-sudo ./svc.sh install osmrunner && sudo ./svc.sh start
-```
-
-Then:
-
-- Lock the runner down (PLAN.md §A3): require approval for outside PRs, no fork
-  `pull_request` triggers, no passwordless sudo.
-- TLS for the download host: `certbot --nginx -d <hostname>`.
-- First data seed: trigger the `seed-planet` workflow (`workflow_dispatch`).

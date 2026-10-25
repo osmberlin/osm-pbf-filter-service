@@ -1,11 +1,11 @@
 ---
-# Example play. The FOSSGIS admins should fold the `osm_extract_service` role
-# into their existing playbook/inventory rather than run this standalone.
+# Example play for our own Hetzner Cloud server (Debian 12, CX43).
 - name: Provision the osm-pbf-filter-service host
   hosts: osm_extract
   become: true
   roles:
     - role: osm_extract_service
       vars:
-        osm_download_hostname: osm.example.org   # set the real download host
+        osm_download_hostname: "_"   # IP only for now; set a real domain later
         # osm_runner_user: osmrunner
+        # osm_enable_ufw: true       # false = rely on the Hetzner Cloud Firewall only

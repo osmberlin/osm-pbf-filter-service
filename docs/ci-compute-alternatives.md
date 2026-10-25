@@ -1,5 +1,10 @@
 # CI / compute alternatives for full-planet OSM filtering
 
+> **Status (2026-10-25): decision made.** We run on our own Hetzner Cloud CX43
+> with nginx and Geofabrik continent extracts instead of the planet; see
+> [poc-hosting.md](poc-hosting.md). This note stays as background research and
+> still describes the planet-based plan.
+
 > **Status:** research note for maintainers (not a decision yet).  
 > **Date:** 2026-08-05.  
 > **Purpose:** Compare GitHub-hosted Actions and SaaS/CI alternatives against a dedicated Hetzner baseline for two pipelines (osmium-only extracts; osmium + daily throwaway PostGIS + pmtiles/gpkg). Prefer a GitHub-Actions-like UI for volunteer maintainers; cost is critical (no sponsors yet).  

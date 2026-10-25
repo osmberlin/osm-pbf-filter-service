@@ -31,10 +31,12 @@ contact:    github-user                        # GitHub user/org of the maintain
 
 # WHERE to extract. Choose exactly one of `region` or `polygon`.
 area:
-  region: germany                # an id from regions/regions.yaml
+  region: germany                # a region or source id from regions/regions.yaml,
+                                 # or `world` (filtered from every source, then merged)
   # polygon: ./area.geojson      # OR a custom GeoJSON Polygon/MultiPolygon.
                                  # Validated on each run; invalid geometry is
                                  # skipped + reported in the Action (see PLAN.md B4).
+                                 # Not scheduled yet: such projects are skipped with a warning.
 
 # WHAT to keep. osmium tags-filter expressions.
 # Syntax: [object-types/]key[=value[,value...]]
@@ -66,7 +68,10 @@ See the worked examples in this folder:
   **real project**: admin + postal-code boundaries for Germany, modeled on
   [osm-boundary-checker-germany](https://github.com/osmberlin/osm-boundary-checker-germany)
 
-Together they demonstrate the optimisation: both sit under **Europe**, so the
-Europe intermediate extract is built once with the **union** of their tags
-(`boundary`, `admin_level`, `amenity=playground`), then Germany and France are
-cut from that smaller Europe file.
+Together they demonstrate the optimisation: both sit under the **Europe** source,
+so the `germany` and `france` regions are cut from it in one pass and each is
+tag-filtered to the **union** of its projects' tags before the final per-project
+filter.
+
+`area: {region: world}` reads every active source and merges the pieces; with
+only Europe active it behaves like `region: europe`.
