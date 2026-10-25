@@ -20,6 +20,8 @@ installed on the community server.
   - Part A — Server provisioning (the infrastructure)
   - Part B — How the application works (data lifecycle, configs, the extractor)
   - Part C — CI/CD workflows
+- **[docs/poc-hosting.md](docs/poc-hosting.md)** — current direction: proof of
+  concept on hourly/free compute + S3 (research, costs, proposal).
 - **[docs/admin-setup.md](docs/admin-setup.md)** — step-by-step setup session with
   the server admin (server vs. GitHub steps, test, debugging).
 - **[ZUSAMMENFASSUNG.de.md](ZUSAMMENFASSUNG.de.md)** — kurze deutsche
