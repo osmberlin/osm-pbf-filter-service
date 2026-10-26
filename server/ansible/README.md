@@ -1,62 +1,50 @@
 # server/ansible — provisioning
 
-One-time provisioning for our own osm-pbf-filter-service server: a Hetzner Cloud
-**CX43** (8 vCPU, 16 GB RAM, 160 GB NVMe), **Debian 12**. After this runs, the
-GitHub Actions runner does everything else; you shouldn't need to log into the
-server for normal operation. Step-by-step guide:
-[docs/server-setup.md](../../docs/server-setup.md).
+Provisioning for osm-pbf-filter-service servers (Debian 12). Currently every
+night's server is created and deleted by the workflow (path A below), so you
+shouldn't need to log into a server for normal operation. Step-by-step guide:
+[docs/setup.md](../../docs/setup.md).
 
-## What the role does
+## Two paths
 
-`roles/osm_extract_service/` (see [tasks/main.yml](roles/osm_extract_service/tasks/main.yml)):
+| | A. Nightly throwaway server | B. Long-lived server that serves itself |
+|---|---|---|
+| Used by | `.github/workflows/daily.yml` (current) | nothing yet; e.g. FOSSGIS later |
+| Playbooks | [nightly-create.yml](nightly-create.yml), [nightly-destroy.yml](nightly-destroy.yml) | [playbook.example.yml](playbook.example.yml) + [inventory.example.ini](inventory.example.ini) |
+| Role mode | `osm_serve: false` | `osm_serve: true` (default) |
+| Delivery | files go to Cloudflare R2 | nginx on the server |
 
-1. installs apt packages: `osmium-tool`, `python3-pyosmium`, `python3-yaml`,
-   `nginx`, `git`, `jq`, `curl`, `certbot`, `unattended-upgrades`, `ufw`;
-2. links `pyosmium-up-to-date` onto PATH. Debian 12's `python3-pyosmium` (3.6.0)
-   ships it as `/usr/lib/python3-pyosmium/pyosmium-up-to-date` and supports
-   `--size` and `--server`, so no virtualenv is needed;
-3. turns on automatic security updates (`unattended-upgrades`);
-4. creates the unprivileged runner user `osmrunner` (system user, **no sudo**);
-5. creates `/srv/osm/{sources,work,extracts}` owned by that user;
-6. installs the nginx site (HTTP, serves `/extracts/`), removes Debian's default
-   site, and reloads nginx only after `nginx -t` passes. The default
-   `osm_download_hostname: "_"` makes it the default server, so it works with
-   only an IP address;
-7. enables `ufw` with 22, 80, 443 allowed and everything else inbound denied.
+### A. Nightly throwaway server
 
-**Firewall decision:** the main filter is the **Hetzner Cloud Firewall**
-(created by `hetzner.yml`, free, rules 22/80/443). `ufw` is a second layer on the
-box, kept minimal; set `osm_enable_ufw: false` to drop it.
+`nightly-create.yml` creates the SSH key and a Cloud Firewall (inbound SSH only),
+then tries the server candidates in order (cpx42 in nbg1 and hel1, ccx33 in fsn1
+and nbg1, cpx52 in nbg1) because Hetzner types are often unavailable. The first
+one that works is used. It waits for SSH and runs the role with
+`osm_serve: false` (toolchain only). The server is labelled
+`project=osm-pbf-filter-service,role=nightly`; `nightly-destroy.yml` deletes every
+server with that label (the workflow runs it first, to clean up after crashed
+runs, and last, always). Each attempt is in [tasks/create-server.yml](tasks/create-server.yml).
 
-Variables are in [defaults/main.yml](roles/osm_extract_service/defaults/main.yml).
-Override per inventory or in the play.
-
-## Two ways to run it
-
-**A. New Hetzner server, fully from code** ([hetzner.yml](hetzner.yml)). Creates the
-SSH key, Cloud Firewall (22/80/443 in) and the server with the `hetzner.hcloud`
-modules, waits for SSH, then runs the role. No OpenTofu and no state file: the
-modules are idempotent by resource name (re-running changes nothing).
+The workflow needs the secrets `HCLOUD_TOKEN` and `SSH_PRIVATE_KEY` (plus the R2
+secrets for the pipeline itself); see [docs/setup.md](../../docs/setup.md). You can
+also run the playbooks by hand:
 
 ```bash
-# one-time tooling (see docs/server-setup.md step 4)
 uv tool install ansible-core --with requests --with python-dateutil
 cd server/ansible
 ansible-galaxy collection install -r requirements.yml
 export HCLOUD_TOKEN=...          # read/write token of the Hetzner project; never written to a file
-ansible-playbook hetzner.yml
+ansible-playbook nightly-create.yml -e ip_file=/tmp/server_ip   # prints/writes the server IP
+ansible-playbook nightly-destroy.yml                            # delete it again, do not forget
 ```
 
-Variables (override with `-e`): `hcloud_server_name` (osm-extracts),
-`hcloud_server_type` (cx43), `hcloud_image` (debian-12), `hcloud_location`
-(fsn1; or nbg1), `hcloud_ssh_public_key_path` (`~/.ssh/id_ed25519.pub`),
-`hcloud_ssh_source_ips` (restrict SSH to your IP), `hcloud_labels`.
-The key's private half must be available to ssh (agent or default key).
-Tear down with `ansible-playbook hetzner-destroy.yml -e confirm=yes`
-(deletes the server and all its data; key and firewall stay).
+Needs `~/.ssh/id_ed25519.pub` (override with `-e hcloud_ssh_public_key_path=...`).
+A server left running costs money, so always run the destroy playbook.
 
-**B. Existing server** (e.g. FOSSGIS later): [playbook.example.yml](playbook.example.yml)
-with an inventory; only the role runs.
+### B. Long-lived server that serves itself
+
+Only the role runs, with nginx, ufw, certbot and unattended-upgrades. Use it for
+an existing or manually created server (e.g. FOSSGIS later):
 
 ```bash
 ansible-galaxy collection install -r requirements.yml   # community.general is enough here
@@ -64,22 +52,39 @@ cp inventory.example.ini inventory.ini   # put the server IP in; initial login i
 ansible-playbook -i inventory.ini playbook.example.yml
 ```
 
-The role is idempotent; re-run it after OS upgrades or variable changes.
+Once a domain exists: set `osm_download_hostname`, re-run the role, run
+`certbot --nginx -d <hostname>`, and update `PUBLIC_BASE` in `extractor/build.py`.
+The files would have to get to that server in some way (the current workflow
+publishes to R2). If a runner is ever wanted on such a server, a self-hosted
+GitHub runner could be registered there, but it needs the hardening for public
+repos described in PLAN.md §A8.
 
-## Manual follow-up (NOT in the role)
+## What the role does
 
-Runner registration needs a one-time token from GitHub (Settings -> Actions ->
-Runners -> New self-hosted runner), so it stays manual. Full commands with the
-current runner version are in [docs/server-setup.md](../../docs/server-setup.md#6-register-the-github-actions-runner).
-In short: download the runner as `osmrunner`, `./config.sh --labels osm
---name hetzner-osm`, then as root `./svc.sh install osmrunner && ./svc.sh start`.
+`roles/osm_extract_service/` (see [tasks/main.yml](roles/osm_extract_service/tasks/main.yml)).
+Always:
 
-Then:
+1. installs the toolchain: `osmium-tool`, `python3-pyosmium`, `python3-yaml`,
+   `rclone`, `rsync`, `git`, `jq`, `curl`;
+2. links `pyosmium-up-to-date` onto PATH. Debian 12's `python3-pyosmium` (3.6.0)
+   ships it as `/usr/lib/python3-pyosmium/pyosmium-up-to-date` and supports
+   `--size` and `--server`, so no virtualenv is needed;
+3. creates the unprivileged user `osmrunner` (system user, **no sudo**);
+4. creates `/srv/osm/{sources,work,extracts}` owned by that user.
 
-- Keep the runner locked down (PLAN.md §A3): fork PRs need approval, no fork
-  `pull_request` triggers on the self-hosted runner, no sudo for `osmrunner`.
-- Once a domain exists: set `osm_download_hostname`, re-run the role, run
-  `certbot --nginx -d <hostname>`, and update `PUBLIC_BASE` in `extractor/build.py`.
+Only with `osm_serve: true`:
+
+5. installs `nginx`, `certbot`, `unattended-upgrades`, `ufw`; turns on automatic
+   security updates;
+6. installs the nginx site (HTTP, serves `/extracts/`), removes Debian's default
+   site, and reloads nginx only after `nginx -t` passes. The default
+   `osm_download_hostname: "_"` makes it the default server, so it works with
+   only an IP address;
+7. enables `ufw` with 22, 80, 443 allowed and everything else inbound denied
+   (`osm_enable_ufw: false` to drop it; a cloud firewall in front is the main filter).
+
+Variables are in [defaults/main.yml](roles/osm_extract_service/defaults/main.yml).
+Override per inventory or in the play. The role is idempotent.
 
 ## Paused: FOSSGIS / uMap variant
 

@@ -39,7 +39,7 @@ regions:
     polygon: ./polygons/hessen.geojson
 ```
 
-- **`sources`**: Geofabrik continent extracts, kept on the server and updated
+- **`sources`**: Geofabrik continent extracts, kept in the R2 bucket (and on the nightly server during a run) and updated
   daily with Geofabrik's diffs (`<url without -latest.osm.pbf>-updates/`). `url`
   must be an https `…-latest.osm.pbf` download. Only Europe is active; the other
   continents are listed commented out. Sources are processed one after another,

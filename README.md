@@ -5,27 +5,30 @@ on a server and produces small, per-project regional `.osm.pbf` extracts (filter
 by area **and** by tags) that projects can download over stable public URLs.
 
 The design goal is **minimal manual server work**: configuration lives in this
-git repository, and all orchestration runs through CI on a self-hosted runner
-installed on our server.
+git repository, and a nightly GitHub Actions workflow does the rest on a
+throwaway Hetzner server that is deleted after each run.
 
-> **Status: pre-alpha.** Decided 2026-10-25: we run on our **own Hetzner Cloud
-> CX43** (8 vCPU, 16 GB RAM, 160 GB NVMe, ~€16/month) with nginx serving the
-> extracts, and **Europe** (Geofabrik) as the only input for now; more continents
-> can be enabled later. The shared FOSSGIS uMap server variant is paused. The
+> **Status: pre-alpha.** Decided 2026-10-26: no always-on server (too
+> expensive). Each night `daily.yml` creates a **throwaway Hetzner server**,
+> builds the extracts and pushes them to **Cloudflare R2** (public downloads),
+> then deletes the server. Cost: about €4–8/month for the server plus ~$1–2/month
+> for R2. **Europe** (Geofabrik) is the only input for now; more continents can
+> be enabled later. The shared FOSSGIS uMap server variant is paused. The
 > orchestrator in `extractor/` (Python) is implemented, unit-tested
-> (`python3 -m unittest`, run in CI on GitHub-hosted runners) and has run
-> end-to-end locally, but the pipeline has not run on the server yet.
+> (`python3 -m unittest`) and has run end-to-end locally, including the whole
+> nightly script with a local folder standing in for R2. The Hetzner and R2 parts
+> have not run for real yet: follow [docs/setup.md](docs/setup.md).
 
 ## Start here
 
 - **[PLAN.md](PLAN.md)** — the full design, split into:
-  - Part A — Server provisioning (the infrastructure)
+  - Part A — Nightly throwaway server + R2 (the infrastructure)
   - Part B — How the application works (data lifecycle, configs, the extractor)
-  - Part C — CI/CD workflows
-- **[docs/poc-hosting.md](docs/poc-hosting.md)** — current direction: own
-  Hetzner CX43 + nginx, Europe as input (decision, research, costs).
-- **[docs/server-setup.md](docs/server-setup.md)** — step-by-step server setup
-  (server vs. GitHub steps, test, debugging).
+  - Part C — CI/CD workflow
+- **[docs/setup.md](docs/setup.md)** — step-by-step setup: Cloudflare R2, Hetzner
+  token, SSH key, GitHub secrets, first run, checks, debugging.
+- **[docs/poc-hosting.md](docs/poc-hosting.md)** — why throwaway server + R2
+  (decision 2026-10-26, costs, alternatives).
 - **[ZUSAMMENFASSUNG.de.md](ZUSAMMENFASSUNG.de.md)** — kurze deutsche
   Zusammenfassung für die FOSSGIS-Runde.
 - **[projects/](projects/)** — one folder per project; each defines the area and
@@ -53,15 +56,18 @@ people you'd also trust on the server.
 
 Each project declares an **area** (a region, a whole source, `world`, or later a
 custom polygon) and a set of **tag filters** (osmium syntax). The input is a set
-of **sources**: Geofabrik continent extracts kept on the server and updated daily
-with Geofabrik's diffs (`python3 -m extractor update`). A Python orchestrator
-(`python3 -m extractor build`) reads all project configs, figures out which
-sources and regions are actually needed, computes the **union of tags** required
-at each level, and runs `osmium` from the top down (source → region → project) so
-every intermediate extract is as small as possible. Sources are processed one
-after another with cleanup in between; `world` projects are filtered from every
-source and merged. Results are served by nginx with a `status.json` next to each
-file describing how old the data is.
+of **sources**: Geofabrik continent extracts, kept in a Cloudflare R2 bucket
+between nights and updated daily with Geofabrik's diffs
+(`python3 -m extractor update`). Every night `daily.yml` creates a throwaway
+Hetzner server, copies the sources from R2 onto it, updates them, and runs the
+Python orchestrator (`python3 -m extractor build`). It reads all project configs,
+figures out which sources and regions are actually needed, computes the **union of
+tags** required at each level, and runs `osmium` from the top down (source →
+region → project) so every intermediate extract is as small as possible. Sources
+are processed one after another with cleanup in between; `world` projects are
+filtered from every source and merged. Sources and results go back to R2, which
+serves them publicly with a `status.json` next to each file describing how old the
+data is. The workflow commits `plan.json` and `status/`, then deletes the server.
 
 ## Local end-to-end test
 

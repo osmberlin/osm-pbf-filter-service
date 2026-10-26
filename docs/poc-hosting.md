@@ -1,20 +1,41 @@
 # Hosting: research and decision
 
-> **Decision (2026-10-25): our own Hetzner Cloud CX43, always on, with nginx
-> serving the extracts and Geofabrik continent extracts as input (Europe first).**
-> 8 vCPU, 16 GB RAM, 160 GB NVMe, about **€16/month plus €0.50/month for the
-> IPv4 address**, Debian 12, our Ansible role, self-hosted GitHub Actions runner.
-> No S3. Hourly servers, GitHub-hosted runners and S3 storage were considered
-> (tables below, kept as background); the always-on box won on simplicity: the
-> sources stay on disk, daily diffs are cheap, and the setup has the same shape as
-> the paused FOSSGIS server, so moving later is mostly an inventory change. The
-> shared uMap server variant is paused (see
-> [server/ansible/README.md](../server/ansible/README.md)). Current design:
-> [PLAN.md](../PLAN.md).
+> **Decision (2026-10-26): a throwaway Hetzner server per night plus Cloudflare
+> R2 for storage and delivery.** Each night `daily.yml` (GitHub-hosted runner)
+> creates a Hetzner server (cpx42 / ccx33 / cpx52 across nbg1 / hel1 / fsn1,
+> whichever is available), installs the toolchain with our Ansible role, builds
+> the extracts, pushes sources and extracts to R2 and always deletes the server.
+> No self-hosted runner, no nginx. Current design: [PLAN.md](../PLAN.md); setup:
+> [setup.md](setup.md).
 >
-> The text below is the original research and proposal (a proof of concept without
-> a permanent server). Prices excl. VAT, fetched from official pricing pages on
-> 2026-10-25. Re-check before committing money.
+> **Why not an always-on server** (the decision of 2026-10-25, CX43 at ~€16/month,
+> is withdrawn): the cheap CX line is "currently not available" and CPX42
+> (8 vCPU / 16 GB) is about **€83/month incl. VAT**.
+>
+> **Why R2:** no location lock (the server can start wherever a type is
+> available), ~$0.015/GB-month, free egress (we move the continent files every
+> night). **Not a Hetzner Volume** (tied to one location) and **not Hetzner Object
+> Storage** (€6.49+ base fee; its 1 TB of included traffic would be used up by our
+> own nightly transfers). It is the same S3 API, so switching later is just
+> endpoint + keys.
+>
+> **Cost:** server ~€0.13/h × 1–2 h/night = about **€4–8/month**, R2 about
+> **$1–2/month**. Hetzner prices change; re-check before relying on this.
+>
+> **Rejected:** the always-on server (~€83/month); free GitHub-hosted runners for
+> the whole job like Kyle's setup (does not scale to Europe, ToS grey area, only
+> weekly).
+>
+> The shared FOSSGIS uMap server variant stays paused (see
+> [server/ansible/README.md](../server/ansible/README.md)); the role's
+> `osm_serve: true` mode is the path for a long-lived server later.
+>
+> **How to read the rest of this page:** it is the original research (a proof of
+> concept without a permanent server) and is kept as background. Most of it is
+> still valid, but parts are superseded: the Hetzner CX43 price (€0.026/h, ~€16/month)
+> and the CX line in general (not available any more), and the "proposal" at the
+> end (S3 upload from a free runner). Prices excl. VAT, fetched from official
+> pricing pages on 2026-10-25.
 
 ## Goal (original)
 
@@ -65,6 +86,10 @@ Caveats:
   7 days unused) could keep Germany between runs, but it adds complexity. Skip it for the PoC.
 
 ## Option 2: rent a server by the hour (for Europe / the world, or after the PoC)
+
+> Closest to what we now do, except that we create the server ourselves with Ansible
+> instead of an ephemeral runner action. The CX43 figures below are superseded
+> (CX line not available).
 
 The same workflow, but `runs-on` an **ephemeral self-hosted runner** that a
 first job creates through the cloud API and a last job deletes.

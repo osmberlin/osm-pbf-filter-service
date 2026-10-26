@@ -32,7 +32,7 @@ PATHS = {
 # later a custom domain.
 PUBLIC_BASE = "https://osm.example.org/extracts"
 
-# status.json is written next to each extract (served by nginx) AND copied into
+# status.json is written next to each extract (published to R2) AND copied into
 # the repo-relative status/ dir so commit-results.sh can commit the audit log
 # (PLAN.md §B6).
 REPO_STATUS_DIR = "status"
@@ -50,9 +50,9 @@ def osmium(args: list[str]) -> None:
 def build_to_tmp(target: str, build) -> None:
     """Build into `target`.tmp, then atomically promote (same filesystem → rename).
 
-    nginx serves extracts/ directly, so served files must never be written in
-    place: a client downloading during the run would get a truncated pbf. On
-    failure the .tmp is removed so nothing stray lingers in the served dir.
+    A half-written file must never sit at the final path: rclone would publish
+    it, and a long-lived server serving extracts/ directly would hand out a
+    truncated pbf. On failure the .tmp is removed, so nothing stray is published.
     """
     tmp = target + ".tmp"
     os.makedirs(os.path.dirname(target), exist_ok=True)
@@ -136,7 +136,7 @@ def sha256(file: str) -> str:
 
 
 def publish(rel: str, text: str) -> None:
-    """Each status file goes to the nginx dir (served) and the repo's status/ (committed audit log)."""
+    """Each status file goes to extracts/ (published) and the repo's status/ (committed audit log)."""
     for base in (PATHS["extracts"], REPO_STATUS_DIR):
         file = os.path.join(base, rel)
         os.makedirs(os.path.dirname(file), exist_ok=True)

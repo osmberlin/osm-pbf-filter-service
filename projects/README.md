@@ -1,10 +1,11 @@
 # projects/
 
 One subfolder per project. The folder name is the project id and the path
-segment in the download URL. The data file is always served as `latest.osm.pbf`:
+segment in the download URL. The data file is always published as `latest.osm.pbf`
+in the public R2 bucket (`extracts/` prefix):
 
 ```
-https://<host>/extracts/<project-id>/latest.osm.pbf
+https://<bucket-host>/extracts/<project-id>/latest.osm.pbf
 ```
 
 ```
