@@ -1,0 +1,105 @@
+---
+# Create the nightly throwaway server on Hetzner Cloud and install the toolchain.
+# Called by .github/workflows/daily.yml; nightly-destroy.yml deletes it again.
+#
+#   export HCLOUD_TOKEN=...
+#   ansible-playbook nightly-create.yml -e ip_file=/tmp/server_ip
+#
+# Server types are often temporarily unavailable at a location, so we try the
+# candidates in order and take the first one Hetzner accepts.
+
+- name: Create the nightly server
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    hcloud_token: "{{ lookup('env', 'HCLOUD_TOKEN') }}"
+    hcloud_server_name: "osm-nightly-{{ lookup('env', 'GITHUB_RUN_ID') | default('manual', true) }}"
+    hcloud_image: debian-12
+    # First that works wins. 16 GB RAM is the floor (Germany peaked at 6.4 GB;
+    # Europe is not measured yet). cpx42: 8 vCPU / 16 GB / 320 GB, ~€0.13/h.
+    hcloud_candidates:
+      - { type: cpx42, location: nbg1 }
+      - { type: cpx42, location: hel1 }
+      - { type: ccx33, location: fsn1 }   # dedicated 8 vCPU / 32 GB / 240 GB
+      - { type: ccx33, location: nbg1 }
+      - { type: cpx52, location: nbg1 }   # 12 vCPU / 24 GB / 480 GB
+    hcloud_ssh_key_name: osm-nightly
+    hcloud_ssh_public_key_path: "{{ lookup('env', 'HOME') }}/.ssh/id_ed25519.pub"
+    hcloud_firewall_name: osm-nightly
+    hcloud_labels:
+      project: osm-pbf-filter-service
+      role: nightly
+    ip_file: ""
+  module_defaults:
+    group/hetzner.hcloud.all:
+      api_token: "{{ hcloud_token }}"
+  tasks:
+    - name: Fail early if HCLOUD_TOKEN is not set
+      ansible.builtin.assert:
+        that: hcloud_token | length > 0
+        fail_msg: HCLOUD_TOKEN is not set (Hetzner project -> Security -> API tokens, read/write).
+        quiet: true
+
+    - name: Ensure the SSH key exists
+      hetzner.hcloud.ssh_key:
+        name: "{{ hcloud_ssh_key_name }}"
+        public_key: "{{ lookup('ansible.builtin.file', hcloud_ssh_public_key_path) }}"
+        labels: "{{ hcloud_labels }}"
+        state: present
+
+    # Only SSH inbound: the server serves nothing, it only pulls and pushes.
+    - name: Ensure the Cloud Firewall exists (inbound SSH only)
+      hetzner.hcloud.firewall:
+        name: "{{ hcloud_firewall_name }}"
+        labels: "{{ hcloud_labels }}"
+        rules:
+          - description: ssh
+            direction: in
+            protocol: tcp
+            port: "22"
+            source_ips: ["0.0.0.0/0", "::/0"]
+        state: present
+
+    - name: Try the server candidates in order
+      ansible.builtin.include_tasks: tasks/create-server.yml
+      loop: "{{ hcloud_candidates }}"
+      loop_control:
+        loop_var: candidate
+      when: server_ipv4 is not defined
+
+    - name: Fail if no candidate was available
+      ansible.builtin.assert:
+        that: server_ipv4 is defined
+        fail_msg: "No server type was available: {{ hcloud_candidates }}"
+        quiet: true
+
+    - name: Wait for SSH
+      ansible.builtin.wait_for:
+        host: "{{ server_ipv4 }}"
+        port: 22
+        delay: 5
+        timeout: 300
+
+    - name: Hand the IP to the workflow
+      ansible.builtin.copy:
+        content: "{{ server_ipv4 }}"
+        dest: "{{ ip_file }}"
+        mode: "0644"
+      when: ip_file | length > 0
+
+    - name: Add the server to the in-memory inventory
+      ansible.builtin.add_host:
+        name: "{{ hcloud_server_name }}"
+        groups: osm_nightly
+        ansible_host: "{{ server_ipv4 }}"
+        ansible_user: root
+        ansible_ssh_common_args: "-o StrictHostKeyChecking=accept-new"
+
+- name: Install the toolchain
+  hosts: osm_nightly
+  become: true
+  roles:
+    - role: osm_extract_service
+      vars:
+        osm_serve: false   # throwaway: no nginx; files go to R2

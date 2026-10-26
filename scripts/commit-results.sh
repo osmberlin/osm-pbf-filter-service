@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# DRAFT — commit the resolved plan + status metadata so git history is the audit
-# log (PLAN.md §B6). Binaries are NOT committed (they live under nginx).
+# Commit the resolved plan + status metadata so git history is the audit log
+# (PLAN.md §B6). Binaries are NOT committed (they live in R2).
 set -euo pipefail
 
 git config user.name  "osm-extract-bot"

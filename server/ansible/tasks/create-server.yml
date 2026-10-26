@@ -1,0 +1,29 @@
+---
+# One attempt from nightly-create.yml. A type that is unavailable at a location
+# fails here; the rescue lets the loop move on to the next candidate.
+- name: "Try {{ candidate.type }} in {{ candidate.location }}"
+  block:
+    - name: "Create {{ candidate.type }} in {{ candidate.location }}"
+      hetzner.hcloud.server:
+        name: "{{ hcloud_server_name }}"
+        server_type: "{{ candidate.type }}"
+        image: "{{ hcloud_image }}"
+        location: "{{ candidate.location }}"
+        ssh_keys: ["{{ hcloud_ssh_key_name }}"]
+        firewalls: ["{{ hcloud_firewall_name }}"]
+        labels: "{{ hcloud_labels }}"
+        state: started
+      register: created
+
+    - name: Remember the server
+      ansible.builtin.set_fact:
+        server_ipv4: "{{ created.hcloud_server.ipv4_address }}"
+        server_type: "{{ candidate.type }}"
+
+    - name: Report
+      ansible.builtin.debug:
+        msg: "Created {{ hcloud_server_name }} ({{ candidate.type }}, {{ candidate.location }}) at {{ server_ipv4 }}"
+  rescue:
+    - name: Not available, try the next one
+      ansible.builtin.debug:
+        msg: "{{ candidate.type }} in {{ candidate.location }} failed: {{ ansible_failed_result.msg | default('unknown error') }}"

@@ -27,8 +27,9 @@ PATHS = {
     "work": os.path.join(ROOT, "work"),
     "extracts": os.path.join(ROOT, "extracts"),
 }
-# Public URL of the nginx extracts dir (= ansible osm_download_hostname).
-# TODO: set the real hostname once agreed with the FOSSGIS admin.
+# Public URL of the extracts in R2 (bucket osm-extracts, prefix extracts/).
+# TODO: replace with the bucket's public r2.dev URL (docs/setup.md, step 3),
+# later a custom domain.
 PUBLIC_BASE = "https://osm.example.org/extracts"
 
 # status.json is written next to each extract (served by nginx) AND copied into

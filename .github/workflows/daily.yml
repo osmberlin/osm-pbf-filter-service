@@ -1,5 +1,9 @@
-# Daily pipeline: update the sources, build the extracts, commit metadata.
-# See PLAN.md Part C. Runs on the self-hosted runner on our own server.
+# Nightly pipeline on a throwaway Hetzner server (PLAN.md Part C):
+# create server -> copy repo -> fetch sources from R2 -> update + build ->
+# push sources + extracts to R2 -> commit plan/status -> delete server.
+#
+# Secrets (Settings -> Secrets and variables -> Actions), see docs/setup.md:
+#   HCLOUD_TOKEN, SSH_PRIVATE_KEY, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_ENDPOINT
 name: daily
 
 on:
@@ -7,47 +11,104 @@ on:
     # Geofabrik's daily diffs cover data up to ~20:20 UTC and are published soon
     # after; 02:17 is safely later and avoids the top-of-hour cron rush.
     - cron: "17 2 * * *"
-  workflow_dispatch: {}        # allow manual runs
+  workflow_dispatch:
+    inputs:
+      reseed:
+        description: "Re-download these sources from Geofabrik (space-separated ids, e.g. europe). Empty = normal run."
+        required: false
+        default: ""
 
-# Don't let two pipeline runs touch the sources at once.
+# One pipeline at a time: two runs would race on the sources in R2.
 concurrency:
   group: osm-pipeline
   cancel-in-progress: false
 
-# Least privilege by default; the commit step opts into write below.
 permissions:
   contents: read
 
 jobs:
   pipeline:
-    runs-on: [self-hosted, osm]
-    # A hung osmium would otherwise hold the concurrency group forever and
-    # silently stop all future daily runs.
-    timeout-minutes: 600
+    runs-on: ubuntu-latest
+    # GitHub-hosted jobs stop at 6 h; stay below so the cleanup step still runs.
+    timeout-minutes: 330
     permissions:
-      contents: write          # only this job commits status/ + plan.json
+      contents: write          # commits status/ + plan.json
+    env:
+      HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
     steps:
       - uses: actions/checkout@v4
         with:
-          persist-credentials: false   # don't leave a token in .git/config on the runner
+          persist-credentials: false
 
-      - name: Guard free disk (before update)
-        run: ./scripts/check-disk.sh        # an update rewrites a whole source file
+      - name: Check the reseed input
+        env:
+          RESEED: ${{ inputs.reseed }}   # via env, never interpolated into the script
+        run: |
+          if [[ -n "$RESEED" && ! "$RESEED" =~ ^[a-z0-9_\ -]+$ ]]; then
+            echo "::error::reseed must be source ids separated by spaces"; exit 1
+          fi
 
-      - name: Update sources (download missing, apply Geofabrik daily diffs)
-        run: python3 -m extractor update
+      - name: Install Ansible + Hetzner collection
+        run: |
+          pipx install ansible-core
+          pipx inject ansible-core requests python-dateutil
+          ansible-galaxy collection install -r server/ansible/requirements.yml
 
-      - name: Guard free disk (before build)
-        run: ./scripts/check-disk.sh        # intermediate extracts need room too
+      - name: SSH key
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keygen -y -f ~/.ssh/id_ed25519 > ~/.ssh/id_ed25519.pub
 
-      - name: Build extracts
-        run: python3 -m extractor build     # stdlib + apt python3-yaml
+      - name: Delete leftover servers from crashed runs
+        working-directory: server/ansible
+        run: ansible-playbook nightly-destroy.yml
 
-      - name: Clean intermediate work files
-        if: always()             # even on failure: intermediates are GBs
-        run: rm -f /srv/osm/work/*.osm.pbf /srv/osm/work/*.json /srv/osm/work/*.tmp
+      - name: Create the server
+        working-directory: server/ansible
+        run: |
+          ansible-playbook nightly-create.yml -e ip_file="$RUNNER_TEMP/server_ip"
+          echo "SERVER=root@$(cat "$RUNNER_TEMP/server_ip")" >> "$GITHUB_ENV"
+
+      - name: Copy the repo onto the server
+        run: |
+          rsync -az --delete --exclude .git -e "ssh -o StrictHostKeyChecking=accept-new" ./ "$SERVER:/srv/osm/repo/"
+          ssh "$SERVER" chown -R osmrunner:osmrunner /srv/osm/repo
+
+      - name: Configure R2 on the server
+        env:
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+        run: |
+          # Over stdin, so the keys never show up in a command line on the server.
+          printf '[r2]\ntype = s3\nprovider = Cloudflare\naccess_key_id = %s\nsecret_access_key = %s\nendpoint = %s\nno_check_bucket = true\n' \
+            "$R2_ACCESS_KEY_ID" "$R2_SECRET_ACCESS_KEY" "$R2_ENDPOINT" \
+          | ssh "$SERVER" 'install -d -o osmrunner -g osmrunner -m 700 /home/osmrunner/.config/rclone \
+              && cat > /home/osmrunner/.config/rclone/rclone.conf \
+              && chown osmrunner:osmrunner /home/osmrunner/.config/rclone/rclone.conf \
+              && chmod 600 /home/osmrunner/.config/rclone/rclone.conf'
+
+      - name: Update sources + build extracts (on the server)
+        env:
+          RESEED: ${{ inputs.reseed }}
+        # runuser keeps root's HOME; set osmrunner's so rclone finds its config.
+        run: ssh "$SERVER" "runuser -u osmrunner -- env HOME=/home/osmrunner RESEED='$RESEED' bash -s" < scripts/nightly.sh
+
+      - name: Fetch plan + status
+        run: |
+          rsync -az "$SERVER:/srv/osm/repo/plan.json" .
+          rsync -az "$SERVER:/srv/osm/repo/status/" status/
 
       - name: Commit resolved plan + status
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # read by the credential helper; never persisted or put in argv
         run: ./scripts/commit-results.sh
+
+      - name: Delete the server
+        if: always()           # also after failures: a forgotten server costs money
+        working-directory: server/ansible
+        run: ansible-playbook nightly-destroy.yml

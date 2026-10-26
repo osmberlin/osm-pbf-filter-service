@@ -1,0 +1,30 @@
+---
+# Delete every nightly server of this project (by label), including leftovers of
+# runs that crashed before their cleanup. The data lives in R2, so nothing is lost.
+# The SSH key and firewall are kept for the next night.
+#
+#   export HCLOUD_TOKEN=...
+#   ansible-playbook nightly-destroy.yml
+
+- name: Delete the nightly servers
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    hcloud_token: "{{ lookup('env', 'HCLOUD_TOKEN') }}"
+  module_defaults:
+    group/hetzner.hcloud.all:
+      api_token: "{{ hcloud_token }}"
+  tasks:
+    - name: Find nightly servers
+      hetzner.hcloud.server_info:
+        label_selector: "project=osm-pbf-filter-service,role=nightly"
+      register: found
+
+    - name: Delete them
+      hetzner.hcloud.server:
+        name: "{{ item.name }}"
+        state: absent
+      loop: "{{ found.hcloud_server_info }}"
+      loop_control:
+        label: "{{ item.name }}"

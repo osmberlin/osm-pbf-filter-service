@@ -1,36 +1,46 @@
 ---
 # Variables for the osm_extract_service role. Override per inventory/host.
-# Target: Debian 12 (bookworm), Hetzner Cloud CX43.
+# Target: Debian 12 (bookworm).
 
-# Where the sources + working files + served extracts live.
+# Where the sources, working files and extracts live.
 osm_root: /srv/osm
 
-# Unprivileged user the GitHub Actions runner and the pipeline run as.
-# It gets NO sudo (the role never adds it to a sudoers file or the sudo group).
+# Unprivileged user the pipeline runs as. It gets NO sudo (the role never adds
+# it to a sudoers file or the sudo group).
 osm_runner_user: osmrunner
 osm_runner_home: "/home/{{ osm_runner_user }}"
+
+# true  = long-lived server that serves the extracts itself (nginx, ufw,
+#         automatic updates, certbot), e.g. a FOSSGIS server later.
+# false = the nightly throwaway server (server/ansible/nightly-create.yml):
+#         toolchain only; the files go to R2 and the server is deleted after the run.
+osm_serve: true
 
 # nginx server_name. "_" = catch-all default server, so the box works with only
 # an IP address. Set a real hostname once a domain exists, then run certbot.
 osm_download_hostname: "_"
 
-# On-box firewall (ufw): allow 22, 80, 443 only. The Hetzner Cloud Firewall in
-# front of the server is the primary filter; this is a second layer. Set to
-# false if you only want the Cloud Firewall.
+# On-box firewall (ufw, only when osm_serve): allow SSH, 80, 443. A cloud
+# firewall in front is the primary filter; this is a second layer.
 osm_enable_ufw: true
 osm_ssh_port: 22
 
-# System packages installed via apt.
-osm_system_packages:
+# Always installed: what the pipeline needs.
+osm_toolchain_packages:
   - osmium-tool
   - python3-pyosmium    # Debian 12: 3.6.0, provides pyosmium-up-to-date (see tasks)
   - python3-yaml        # the only orchestrator dependency (extractor/config.py)
   - python3
-  - nginx
+  - rclone              # R2 (S3) up/download
+  - rsync               # the workflow copies the repo onto the server
   - git
   - jq
   - curl
   - ca-certificates
+
+# Only with osm_serve: true.
+osm_serve_packages:
+  - nginx
   - certbot
   - python3-certbot-nginx
   - unattended-upgrades

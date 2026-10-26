@@ -1,11 +1,11 @@
 ---
-# One-time provisioning for the osm-pbf-filter-service on our own Debian 12 box.
-# After this runs, the GitHub Actions runner does everything else — except the
-# interactive runner registration, which stays manual (see server/ansible/README.md).
+# Provisioning for the osm-pbf-filter-service on Debian 12. Used for the nightly
+# throwaway server (osm_serve: false) and for a long-lived server that serves
+# the extracts itself (osm_serve: true). See server/ansible/README.md.
 
-- name: Install system packages
+- name: Install the toolchain
   ansible.builtin.apt:
-    name: "{{ osm_system_packages }}"
+    name: "{{ osm_toolchain_packages }}"
     state: present
     update_cache: true
 
@@ -16,14 +16,6 @@
     src: /usr/lib/python3-pyosmium/pyosmium-up-to-date
     dest: /usr/local/bin/pyosmium-up-to-date
     state: link
-
-- name: Enable automatic security updates
-  ansible.builtin.copy:
-    dest: /etc/apt/apt.conf.d/20auto-upgrades
-    content: |
-      APT::Periodic::Update-Package-Lists "1";
-      APT::Periodic::Unattended-Upgrade "1";
-    mode: "0644"
 
 - name: Create the unprivileged runner user (no sudo)
   ansible.builtin.user:
@@ -45,48 +37,64 @@
     - work
     - extracts
 
-# Debian's default site is a `default_server` on port 80; two default servers
-# make `nginx -t` fail. Our site takes over that role.
-- name: Disable the nginx default site
-  ansible.builtin.file:
-    path: /etc/nginx/sites-enabled/default
-    state: absent
-  notify: Reload nginx
+- name: Serve the extracts (long-lived server only)
+  when: osm_serve
+  block:
+    - name: Install the serving packages
+      ansible.builtin.apt:
+        name: "{{ osm_serve_packages }}"
+        state: present
 
-- name: Install the nginx site for the extracts
-  ansible.builtin.template:
-    src: nginx-osm-extracts.conf.j2
-    dest: /etc/nginx/sites-available/osm-extracts.conf
-    mode: "0644"
-  notify: Reload nginx
+    - name: Enable automatic security updates
+      ansible.builtin.copy:
+        dest: /etc/apt/apt.conf.d/20auto-upgrades
+        content: |
+          APT::Periodic::Update-Package-Lists "1";
+          APT::Periodic::Unattended-Upgrade "1";
+        mode: "0644"
 
-- name: Enable the nginx site
-  ansible.builtin.file:
-    src: /etc/nginx/sites-available/osm-extracts.conf
-    dest: /etc/nginx/sites-enabled/osm-extracts.conf
-    state: link
-  notify: Reload nginx
+    # Debian's default site is a `default_server` on port 80; two default servers
+    # make `nginx -t` fail. Our site takes over that role.
+    - name: Disable the nginx default site
+      ansible.builtin.file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+      notify: Reload nginx
 
-- name: Make sure nginx is running and enabled
-  ansible.builtin.service:
-    name: nginx
-    state: started
-    enabled: true
+    - name: Install the nginx site for the extracts
+      ansible.builtin.template:
+        src: nginx-osm-extracts.conf.j2
+        dest: /etc/nginx/sites-available/osm-extracts.conf
+        mode: "0644"
+      notify: Reload nginx
 
-- name: Allow SSH, HTTP, HTTPS in ufw
-  community.general.ufw:
-    rule: allow
-    port: "{{ item }}"
-    proto: tcp
-  loop:
-    - "{{ osm_ssh_port }}"
-    - "80"
-    - "443"
-  when: osm_enable_ufw
+    - name: Enable the nginx site
+      ansible.builtin.file:
+        src: /etc/nginx/sites-available/osm-extracts.conf
+        dest: /etc/nginx/sites-enabled/osm-extracts.conf
+        state: link
+      notify: Reload nginx
 
-- name: Enable ufw (deny incoming by default)
-  community.general.ufw:
-    state: enabled
-    policy: deny
-    direction: incoming
-  when: osm_enable_ufw
+    - name: Make sure nginx is running and enabled
+      ansible.builtin.service:
+        name: nginx
+        state: started
+        enabled: true
+
+    - name: Allow SSH, HTTP, HTTPS in ufw
+      community.general.ufw:
+        rule: allow
+        port: "{{ item }}"
+        proto: tcp
+      loop:
+        - "{{ osm_ssh_port }}"
+        - "80"
+        - "443"
+      when: osm_enable_ufw
+
+    - name: Enable ufw (deny incoming by default)
+      community.general.ufw:
+        state: enabled
+        policy: deny
+        direction: incoming
+      when: osm_enable_ufw
